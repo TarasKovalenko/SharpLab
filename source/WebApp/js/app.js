@@ -1,4 +1,5 @@
 import './polyfills/iterable-dom.js';
+import trackFeature from './helpers/track-feature.js';
 
 import languages from './helpers/languages.js';
 import targets from './helpers/targets.js';
@@ -18,6 +19,24 @@ function getResultType(target) {
         case targets.run: return 'run';
         default: return 'code';
     }
+}
+
+function resetLoading() {
+    if (this.loadingDelay) {
+        clearTimeout(this.loadingDelay);
+        this.loadingDelay = null;
+    }
+    this.loading = false;
+}
+
+function applyUpdateWait() {
+    if (this.loadingDelay)
+        return;
+
+    this.loadingDelay = setTimeout(() => {
+        this.loading = true;
+        this.loadingDelay = null;
+    }, 300);
 }
 
 function applyUpdateResult(updateResult) {
@@ -40,7 +59,7 @@ function applyUpdateResult(updateResult) {
     }
     this.result = result;
     this.lastResultOfType[result.type] = result;
-    this.loading = false;
+    resetLoading.apply(this);
 }
 
 function applyServerError(message) {
@@ -49,7 +68,7 @@ function applyServerError(message) {
         errors: [{ message }],
         warnings: []
     };
-    this.loading = false;
+    resetLoading.apply(this);
 }
 
 function applyConnectionChange(connectionState) {
@@ -119,14 +138,14 @@ async function createAppAsync() {
     return {
         data,
         computed: {
-            serverOptions: function() {
+            serverOptions() {
                 return {
                     language: this.options.language,
                     'x-optimize': this.options.release ? 'release' : 'debug',
                     'x-target': this.options.target
                 };
             },
-            status: function() {
+            status() {
                 if (!this.online)
                     return { name: 'offline', color: '#aaa' };
                 if (!this.result.success)
@@ -134,7 +153,7 @@ async function createAppAsync() {
                 return { name: 'default', color: '#4684ee' };
             }
         },
-        methods: { applyUpdateResult, applyServerError, applyConnectionChange, applyAstHover }
+        methods: { applyUpdateWait, applyUpdateResult, applyServerError, applyConnectionChange, applyAstHover }
     };
 }
 
@@ -147,11 +166,17 @@ async function createAppAsync() {
     ui.watch('code', () => state.save(data));
     ui.watch('branch', value => {
         data.options.branchId = value ? value.id : null;
+        if (value)
+            trackFeature('Branch: ' + value.id);
         data.loading = true;
         data.serviceUrl = getServiceUrl(value);
     });
 
     ui.watch('options.language', (newLanguage, oldLanguage) => {
+        trackFeature('Language: ' + newLanguage);
+        if (newLanguage === languages.fsharp)
+            data.branch = null;
+
         const target = data.options.target;
         if (data.code !== defaults.getCode(oldLanguage, target))
             return;
@@ -160,6 +185,7 @@ async function createAppAsync() {
     });
 
     ui.watch('options.target', (newTarget, oldTarget) => {
+        trackFeature('Target: ' + newTarget);
         const language = data.options.language;
         if (data.code !== defaults.getCode(language, oldTarget))
             return;

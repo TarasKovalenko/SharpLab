@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.Channel;
@@ -13,14 +13,14 @@ namespace SharpLab.Server.Azure {
         private readonly string _webAppName;
 
         public ApplicationInsightsMonitor(TelemetryClient client, string webAppName) {
-            _client = client;
-            _webAppName = webAppName;
+            _client = Argument.NotNull(nameof(client), client);
+            _webAppName = Argument.NotNullOrEmpty(nameof(webAppName), webAppName);
         }
 
         public void Event(string name, IWorkSession session, IDictionary<string, string> extras = null) {
             var telemetry = new EventTelemetry(name);
             AddDefaultDetails(telemetry, session, extras);
-            _client.TrackEvent(name, extras);
+            _client.TrackEvent(telemetry);
         }
 
         public void Exception(Exception exception, IWorkSession session, IDictionary<string, string> extras = null) {

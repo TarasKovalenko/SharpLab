@@ -46,6 +46,7 @@ namespace SharpLab.Tests {
         [InlineData("Field.Instance.Assign.cs", 7, "f: 0")]
         [InlineData("Field.Static.Assign.cs", 2, "f: 0")]
         [InlineData("Variable.ManyVariables.cs", 12, "x10: 0")]
+        [InlineData("Return.Simple.cs", 8, "0")]
         public async Task SlowUpdate_ReportsValueNotes(string resourceName, int expectedLineNumber, string expectedNotes) {
             var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName));
 
@@ -147,6 +148,15 @@ namespace SharpLab.Tests {
                 expectedOutput.Replace("{newline}", Environment.NewLine),
                 result.ExtensionResult.GetOutputAsString()
             );
+        }
+
+        [Theory]
+        [InlineData("Api.Expressions.Simple.cs")]
+        public async Task SlowUpdate_AllowsExpectedApis(string resourceName) {
+            var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName));
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+
+            AssertIsSuccess(result);
         }
 
         [Fact]
