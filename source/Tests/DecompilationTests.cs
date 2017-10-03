@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,11 +10,11 @@ using MirrorSharp;
 using MirrorSharp.Testing;
 using Newtonsoft.Json.Linq;
 using Pedantic.IO;
-using SharpLab.Server;
-using SharpLab.Server.MirrorSharp.Internal;
-using SharpLab.Tests.Internal;
 using Xunit;
 using Xunit.Abstractions;
+using SharpLab.Server;
+using SharpLab.Server.Common;
+using SharpLab.Tests.Internal;
 
 namespace SharpLab.Tests {
     public class DecompilationTests {
@@ -68,6 +68,7 @@ namespace SharpLab.Tests {
         [InlineData("Preprocessor.IfDebug.cs2cs")] // https://github.com/ashmind/SharpLab/issues/161
         [InlineData("Preprocessor.IfDebug.vb2vb")] // https://github.com/ashmind/SharpLab/issues/161
         [InlineData("FSharp.Preprocessor.IfDebug.fs2cs")] // https://github.com/ashmind/SharpLab/issues/161
+        [InlineData("Using.Simple.cs2cs")] // https://github.com/ashmind/SharpLab/issues/185
         public async Task SlowUpdate_ReturnsExpectedDecompiledCode_InDebug(string resourceName) {
             var data = TestData.FromResource(resourceName);
             var driver = await NewTestDriverAsync(data, Optimize.Debug);
@@ -119,6 +120,17 @@ namespace SharpLab.Tests {
             _output.WriteLine(decompiledText ?? "<null>");
             Assert.True(errors.IsNullOrEmpty(), errors);
             Assert.Equal(data.Expected, decompiledText);
+        }
+
+        [Theory]
+        [InlineData("class C { static int F = 0; }")]
+        [InlineData("class C { static C() {} }")]
+        [InlineData("class C { class N { static N() {} } }")]
+        public async Task SlowUpdate_ReturnsNotSupportedError_ForJitAsmWithStaticConstructors(string code) {
+            var driver = MirrorSharpTestDriver.New(MirrorSharpOptions).SetText(code);
+            await driver.SendSetOptionsAsync(LanguageNames.CSharp, TargetNames.JitAsm);
+
+            await Assert.ThrowsAsync<NotSupportedException>(() => driver.SendSlowUpdateAsync<string>());
         }
 
         [Theory]

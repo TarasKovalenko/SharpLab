@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -9,6 +10,7 @@ using Microsoft.IO;
 using MirrorSharp.Advanced;
 using Mono.Cecil;
 using SharpLab.Runtime.Internal;
+using SharpLab.Server.Common;
 using SharpLab.Server.Execution.Internal;
 using SharpLab.Server.Monitoring;
 using Unbreakable;
@@ -32,10 +34,15 @@ namespace SharpLab.Server.Execution {
             using (symbolStream) {
                 assembly = AssemblyDefinition.ReadAssembly(assemblyStream, new ReaderParameters {
                     ReadSymbols = true,
-                    SymbolStream = symbolStream
+                    SymbolStream = symbolStream,
+                    AssemblyResolver = PreCachedAssemblyResolver.Instance
                 });
             }
-            //assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + "-before-rewrite.dll");
+            /*
+            #if DEBUG
+            assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + "-before-rewrite.dll");
+            #endif
+            */
             foreach (var rewriter in _rewriters) {
                 rewriter.Rewrite(assembly, session);
             }
@@ -46,7 +53,11 @@ namespace SharpLab.Server.Execution {
 
             using (var rewrittenStream = _memoryStreamManager.GetStream()) {
                 assembly.Write(rewrittenStream);
-                //assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + ".dll");
+                /*
+                #if DEBUG
+                assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + ".dll");
+                #endif
+                */
                 rewrittenStream.Seek(0, SeekOrigin.Begin);
 
                 var currentSetup = AppDomain.CurrentDomain.SetupInformation;
@@ -90,6 +101,8 @@ namespace SharpLab.Server.Execution {
 
             writer.WriteStartObject();
             writer.WriteProperty("line", step.LineNumber);
+            if (step.LineSkipped)
+                writer.WriteProperty("skipped", true);
             if (step.Notes != null)
                 writer.WriteProperty("notes", step.Notes);
             if (step.Exception != null)
@@ -143,7 +156,7 @@ namespace SharpLab.Server.Execution {
 
                     var assembly = Assembly.Load(ReadAllBytes(assemblyStream));
                     var main = assembly.EntryPoint;
-                    using (guardToken.Scope()) {
+                    using (guardToken.Scope(NewRuntimeGuardSettings())) {
                         var args = main.GetParameters().Length > 0 ? new object[] { new string[0] } : null;
                         var result = main.Invoke(null, args);
                         if (main.ReturnType != typeof(void))
@@ -159,6 +172,14 @@ namespace SharpLab.Server.Execution {
                     ex.Inspect("Exception");
                     return new ExecutionResultWrapper(new ExecutionResult(Output.Stream, Flow.Steps), ex);
                 }
+            }
+
+            private static RuntimeGuardSettings NewRuntimeGuardSettings() {
+                #if DEBUG
+                if (Debugger.IsAttached)
+                    return new RuntimeGuardSettings { TimeLimit = TimeSpan.MaxValue };
+                #endif
+                return null;
             }
 
             private static byte[] ReadAllBytes(Stream stream) {

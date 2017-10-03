@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
@@ -6,6 +6,7 @@ using AshMind.Extensions;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.Ast;
 using Mono.Cecil;
+using SharpLab.Server.Common;
 
 namespace SharpLab.Server.Decompilation {
     public abstract class AstBasedDecompiler : IDecompiler {
@@ -13,14 +14,12 @@ namespace SharpLab.Server.Decompilation {
 
         public void Decompile(Stream assemblyStream, TextWriter codeWriter) {
             // ReSharper disable once AgentHeisenbug.CallToNonThreadSafeStaticMethodInThreadSafeType
-            var module = ModuleDefinition.ReadModule(assemblyStream);
-            ((BaseAssemblyResolver)module.AssemblyResolver).ResolveFailure += (_, name) => AssemblyCache.GetOrAdd(name.FullName, fullName => {
-                var assembly = AppDomain.CurrentDomain.GetAssemblies().Single(a => a.FullName == fullName);
-                return AssemblyDefinition.ReadAssembly(assembly.GetAssemblyFile().FullName);
+            var module = ModuleDefinition.ReadModule(assemblyStream, new ReaderParameters {
+                AssemblyResolver = PreCachedAssemblyResolver.Instance
             });
 
             var context = new DecompilerContext(module) {
-                Settings = {                    
+                Settings = {
                     CanInlineVariables = false,
                     OperatorOverloading = false,
                     AnonymousMethods = false,
@@ -30,7 +29,8 @@ namespace SharpLab.Server.Decompilation {
                     ExpressionTrees = false,
                     ArrayInitializers = false,
                     ObjectOrCollectionInitializers = false,
-                    LiftedOperators = false
+                    LiftedOperators = false,
+                    UsingStatement = false
                 }
             };
 

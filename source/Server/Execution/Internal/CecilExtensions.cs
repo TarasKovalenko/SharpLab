@@ -1,9 +1,25 @@
-﻿using JetBrains.Annotations;
+using JetBrains.Annotations;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace SharpLab.Server.Execution.Internal {
     internal static class CecilExtensions {
+        public static Instruction CreateLdargBest(this ILProcessor il, ParameterReference parameter) {
+            var index = parameter.Index;
+            if (il.Body.Method.HasThis)
+                index += 1;
+            switch (index) {
+                case 0: return il.Create(OpCodes.Ldarg_0);
+                case 1: return il.Create(OpCodes.Ldarg_1);
+                case 2: return il.Create(OpCodes.Ldarg_2);
+                case 3: return il.Create(OpCodes.Ldarg_3);
+                default:
+                    if (IsSByte(index))
+                        return il.Create(OpCodes.Ldarg_S, (sbyte)index);
+                    return il.Create(OpCodes.Ldarg, index);
+            }
+        }
+
         public static Instruction CreateLdlocBest(this ILProcessor il, VariableDefinition variable) {
             switch (variable.Index) {
                 case 0:  return il.Create(OpCodes.Ldloc_0);

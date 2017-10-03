@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Data;
@@ -6,15 +6,16 @@ using System.Linq;
 using JetBrains.Annotations;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using MirrorSharp;
 using MirrorSharp.Advanced;
 using SharpLab.Runtime;
 using SharpLab.Server.Compilation.Internal;
 using Binder = Microsoft.CSharp.RuntimeBinder.Binder;
 
-namespace SharpLab.Server.MirrorSharp.Internal.Languages {
+namespace SharpLab.Server.Common.Languages {
     [UsedImplicitly(ImplicitUseKindFlags.InstantiatedNoFixedConstructorSignature)]
-    public class CSharpIntegration : ILanguageIntegration {
+    public class CSharpAdapter : ILanguageAdapter {
         private static readonly LanguageVersion MaxLanguageVersion = Enum
             .GetValues(typeof (LanguageVersion))
             .Cast<LanguageVersion>()
@@ -25,7 +26,7 @@ namespace SharpLab.Server.MirrorSharp.Internal.Languages {
         private readonly ImmutableList<MetadataReference> _references;
         private readonly IReadOnlyDictionary<string, string> _features;
 
-        public CSharpIntegration(IMetadataReferenceCollector referenceCollector, IFeatureDiscovery featureDiscovery) {
+        public CSharpAdapter(IMetadataReferenceCollector referenceCollector, IFeatureDiscovery featureDiscovery) {
             _references = referenceCollector.SlowGetMetadataReferencesRecursive(
                 // Essential
                 typeof(Binder).Assembly,
@@ -70,6 +71,23 @@ namespace SharpLab.Server.MirrorSharp.Internal.Languages {
             session.Roslyn.Project = project.WithCompilationOptions(
                 options.WithOutputKind(outputKind).WithAllowUnsafe(allowUnsafe)
             );
+        }
+
+        public ImmutableArray<int> GetMethodParameterLines(IWorkSession session, int lineInMethod, int columnInMethod) {
+            var declaration = RoslynAdapterHelper.FindSyntaxNodeInSession(session, lineInMethod, columnInMethod)
+                ?.AncestorsAndSelf()
+                .OfType<MemberDeclarationSyntax>()
+                .FirstOrDefault();
+
+            if (!(declaration is BaseMethodDeclarationSyntax method))
+                return ImmutableArray<int>.Empty;
+
+            var parameters = method.ParameterList.Parameters;
+            var results = new int[parameters.Count];
+            for (int i = 0; i < parameters.Count; i++) {
+                results[i] = parameters[i].GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            }
+            return ImmutableArray.Create(results);
         }
     }
 }

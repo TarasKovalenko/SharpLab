@@ -1,6 +1,6 @@
-﻿using System;
+using System;
+using System.Collections.Immutable;
 using System.Data;
-using System.Linq;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
 using Microsoft.CodeAnalysis;
@@ -9,9 +9,9 @@ using MirrorSharp.Advanced;
 using MirrorSharp.FSharp.Advanced;
 using SharpLab.Runtime;
 
-namespace SharpLab.Server.MirrorSharp.Internal.Languages {
+namespace SharpLab.Server.Common.Languages {
     [UsedImplicitly(ImplicitUseKindFlags.InstantiatedNoFixedConstructorSignature)]
-    public class FSharpIntegration : ILanguageIntegration {
+    public class FSharpAdapter : ILanguageAdapter {
         public string LanguageName => LanguageNames.FSharp;
 
         public void SlowSetup(MirrorSharpOptions options) {
@@ -38,6 +38,10 @@ namespace SharpLab.Server.MirrorSharp.Internal.Languages {
 
         public void SetOptionsForTarget([NotNull] IWorkSession session, [NotNull] string target) {
             // I don't use `exe` for Run, see FSharpEntryPointRewriter
+        }
+
+        public ImmutableArray<int> GetMethodParameterLines(IWorkSession session, int lineInMethod, int columnInMethod) {
+            return ImmutableArray<int>.Empty; // not supported yet
         }
     }
 }

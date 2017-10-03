@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Serialization;
@@ -13,7 +13,7 @@ using MirrorSharp;
 using MirrorSharp.Testing;
 using MirrorSharp.Testing.Results;
 using SharpLab.Server;
-using SharpLab.Server.MirrorSharp.Internal;
+using SharpLab.Server.Common;
 using SharpLab.Tests.Internal;
 
 namespace SharpLab.Tests {
@@ -43,8 +43,6 @@ namespace SharpLab.Tests {
 
         [Theory]
         [InlineData("Variable.AssignCall.cs", 3, "x: 0")]
-        [InlineData("Field.Instance.Assign.cs", 7, "f: 0")]
-        [InlineData("Field.Static.Assign.cs", 2, "f: 0")]
         [InlineData("Variable.ManyVariables.cs", 12, "x10: 0")]
         [InlineData("Return.Simple.cs", 8, "0")]
         public async Task SlowUpdate_ReportsValueNotes(string resourceName, int expectedLineNumber, string expectedNotes) {
@@ -60,11 +58,78 @@ namespace SharpLab.Tests {
         }
 
         [Theory]
+        [InlineData("void M(int a) {}", "M(1)", 1, "a: 1")]
+        [InlineData("void M(int a) {\r\n}", "M(1)", 1, "a: 1")]
+        [InlineData("void M(int a)\r\n{}", "M(1)", 1, "a: 1", true)]
+        [InlineData("void M(int a\r\n) {}", "M(1)", 1, "a: 1", true)]
+        [InlineData("void M(\r\nint a\r\n) {}", "M(1)", 2, "a: 1", true)]
+        [InlineData("void M(int a) {\r\n\r\nConsole.WriteLine();}", "M(1)", 1, "a: 1")]
+        [InlineData("void M(int a, int b) {}", "M(1, 2)", 1, "a: 1, b: 2")]
+        [InlineData("void M(int a, out int b) { b = 1; }", "M(1, out var _)", 1, "a: 1")]
+        [InlineData("void M(int a, int b = 0) {}", "M(1)", 1, "a: 1, b: 0")]
+        public async Task SlowUpdate_ReportsValueNotes_ForCSharpStaticMethodArguments(string methodCode, string methodCallCode, int expectedMethodLineNumber, string expectedNotes, bool expectedSkipped = false) {
+            var driver = await NewTestDriverAsync(@"
+                using System;
+                public static class Program {
+                    public static void Main() { " + methodCallCode + @"; }
+                    static " + methodCode + @"
+                }
+            ");
+            var methodStartLine = 4; // see above
+
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+            var steps = result.ExtensionResult?.Flow
+                .Select(s => new { s.Line, s.Notes, s.Skipped })
+                .ToArray();
+
+            AssertIsSuccess(result);
+            Assert.Contains(new { Line = methodStartLine + expectedMethodLineNumber, Notes = expectedNotes, Skipped = expectedSkipped }, steps);
+        }
+
+        [Fact]
+        public async Task SlowUpdate_ReportsValueNotes_ForCSharpInstanceMethodArguments() {
+            var driver = await NewTestDriverAsync(@"
+                using System;
+                public class Program {
+                    public static void Main() { new Program().M(1); }
+                    public void M(int a) {}
+                }
+            ");
+
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+            var steps = result.ExtensionResult?.Flow
+                .Select(s => new { s.Line, s.Notes })
+                .ToArray();
+
+            AssertIsSuccess(result);
+            Assert.Contains(new { Line = 5, Notes = "a: 1" }, steps);
+        }
+
+        [Fact]
+        public async Task SlowUpdate_ReportsValueNotes_ForCSharpConstructorArguments() {
+            var driver = await NewTestDriverAsync(@"
+                using System;
+                public class Program {
+                    Program(int a) {}
+                    public static void Main() { new Program(1); }
+                }
+            ");
+
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+            var steps = result.ExtensionResult?.Flow
+                .Select(s => new { s.Line, s.Notes })
+                .ToArray();
+
+            AssertIsSuccess(result);
+            Assert.Contains(new { Line = 4, Notes = "a: 1" }, steps);
+        }
+
+        [Theory]
         [InlineData("Loop.For.10Iterations.cs", 3, "i: 0; i: 1; i: 2; …")]
         [InlineData("Variable.MultipleDeclarationsOnTheSameLine.cs", 3, "a: 0, b: 0, c: 0, …")]
         [InlineData("Variable.LongName.cs", 3, "abcdefghi…: 0")]
         [InlineData("Variable.LongValue.cs", 3, "x: 123456789…")]
-        public async Task SlowUpdate_ReportsValueNotesWithLengthLimits(string resourceName, int lineNumber, string expectedNotes) {
+        public async Task SlowUpdate_ReportsValueNotes_WithLengthLimits(string resourceName, int lineNumber, string expectedNotes) {
             var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName));
 
             var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
@@ -209,6 +274,7 @@ namespace SharpLab.Tests {
         [Theory]
         [InlineData("Regression.CertainLoop.cs")]
         [InlineData("Regression.FSharpNestedLambda.fs", LanguageNames.FSharp)]
+        [InlineData("Regression.NestedAnonymousObject.cs")]
         public async Task SlowUpdate_DoesNotFail(string resourceName, string languageName = LanguageNames.CSharp) {
             var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName), languageName);
             var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
@@ -270,7 +336,8 @@ namespace SharpLab.Tests {
                 return new FlowStepData {
                     Line = token.Value<int>("line"),
                     Exception = token.Value<string>("exception"),
-                    Notes = token.Value<string>("notes")
+                    Notes = token.Value<string>("notes"),
+                    Skipped = token.Value<bool?>("skipped") ?? false,
                 };
             }
         }
@@ -279,6 +346,7 @@ namespace SharpLab.Tests {
             public int Line { get; set; }
             public string Exception { get; set; }
             public string Notes { get; set; }
+            public bool Skipped { get; set; }
         }
     }
 }

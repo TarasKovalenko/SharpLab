@@ -1,9 +1,11 @@
-﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using MirrorSharp.Advanced;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using SharpLab.Runtime.Internal;
+using SharpLab.Server.Common;
 
 namespace SharpLab.Server.Execution.Internal {
     public class FlowReportingRewriter : IAssemblyRewriter {
@@ -16,6 +18,12 @@ namespace SharpLab.Server.Execution.Internal {
         private static readonly MethodInfo ReportExceptionMethod =
             typeof(Flow).GetMethod(nameof(Flow.ReportException));
 
+        private readonly IReadOnlyDictionary<string, ILanguageAdapter> _languages;
+
+        public FlowReportingRewriter(IReadOnlyList<ILanguageAdapter> languages) {
+            _languages = languages.ToDictionary(l => l.LanguageName);
+        }
+
         public void Rewrite(AssemblyDefinition assembly, IWorkSession session) {
             foreach (var module in assembly.Modules) {
                 var flow = new ReportMethods {
@@ -24,21 +32,21 @@ namespace SharpLab.Server.Execution.Internal {
                     ReportException = module.ImportReference(ReportExceptionMethod),
                 };
                 foreach (var type in module.Types) {
-                    Rewrite(type, flow);
+                    Rewrite(type, flow, session);
                     foreach (var nested in type.NestedTypes) {
-                        Rewrite(nested, flow);
+                        Rewrite(nested, flow, session);
                     }
                 }
             }
         }
 
-        private void Rewrite(TypeDefinition type, ReportMethods flow) {
+        private void Rewrite(TypeDefinition type, ReportMethods flow, IWorkSession session) {
             foreach (var method in type.Methods) {
-                Rewrite(method, flow);
+                Rewrite(method, flow, session);
             }
         }
 
-        private void Rewrite(MethodDefinition method, ReportMethods flow) {
+        private void Rewrite(MethodDefinition method, ReportMethods flow, IWorkSession session) {
             if (!method.HasBody || method.Body.Instructions.Count == 0)
                 return;
 
@@ -47,34 +55,61 @@ namespace SharpLab.Server.Execution.Internal {
             var lastLine = (int?)null;
             for (var i = 0; i < instructions.Count; i++) {
                 var instruction = instructions[i];
-
                 var sequencePoint = instruction.SequencePoint;
-                if (sequencePoint != null && sequencePoint.StartLine != HiddenLine && sequencePoint.StartLine != lastLine) {
+                var hasSequencePoint = sequencePoint != null && sequencePoint.StartLine != HiddenLine;
+                if (!hasSequencePoint && lastLine == null)
+                    continue;
+
+                if (hasSequencePoint && sequencePoint.StartLine != lastLine) {
+                    if (i == 0)
+                        TryInsertReportMethodArguments(il, instruction, method, flow, session, ref i);
+
                     InsertBeforeAndRetargetAll(il, instruction, il.CreateLdcI4Best(sequencePoint.StartLine));
                     il.InsertBefore(instruction, il.CreateCall(flow.ReportLineStart));
                     i += 2;
                     lastLine = sequencePoint.StartLine;
                 }
 
-                var valueOrNull = GetValueToReport(instruction, il);
+                var valueOrNull = GetValueToReport(instruction, il, session);
                 if (valueOrNull == null)
                     continue;
 
                 var value = valueOrNull.Value;
-                var insertTarget = instruction;
-                il.InsertBefore(instruction, il.Create(OpCodes.Dup));
-                il.InsertBefore(instruction, value.name != null ? il.Create(OpCodes.Ldstr, value.name) : il.Create(OpCodes.Ldnull));
-                il.InsertBefore(instruction, il.CreateLdcI4Best(sequencePoint?.StartLine ?? lastLine ?? Flow.UnknownLineNumber));
-                il.InsertBefore(instruction, il.CreateCall(new GenericInstanceMethod(flow.ReportValue) {
-                    GenericArguments = { value.type }
-                }));
-                i += 4;
+                InsertReportValue(
+                    il, instruction,
+                    il.Create(OpCodes.Dup), value.type, value.name,
+                    sequencePoint?.StartLine ?? lastLine ?? Flow.UnknownLineNumber,
+                    flow, ref i
+                );
             }
 
             RewriteExceptionHandlers(il, flow);
         }
 
-        private (string name, TypeReference type)? GetValueToReport(Instruction instruction, ILProcessor il) {
+        private void TryInsertReportMethodArguments(ILProcessor il, Instruction instruction, MethodDefinition method, ReportMethods flow, IWorkSession session, ref int index) {
+            if (!method.HasParameters)
+                return;
+
+            var sequencePoint = instruction.SequencePoint;
+            var parameterLines = _languages[session.LanguageName]
+                .GetMethodParameterLines(session, sequencePoint.StartLine, sequencePoint.StartColumn);
+
+            if (parameterLines.Length == 0)
+                return;
+
+            foreach (var parameter in method.Parameters) {
+                if (parameter.ParameterType.IsByReference)
+                    continue;
+                InsertReportValue(
+                    il, instruction,
+                    il.CreateLdargBest(parameter), parameter.ParameterType, parameter.Name,
+                    parameterLines[parameter.Index], flow,
+                    ref index
+                );
+            }
+        }
+
+        private (string name, TypeReference type)? GetValueToReport(Instruction instruction, ILProcessor il, IWorkSession session) {
             var localIndex = GetIndexIfStloc(instruction);
             if (localIndex != null) {
                 var variable = il.Body.Variables[localIndex.Value];
@@ -84,24 +119,26 @@ namespace SharpLab.Server.Execution.Internal {
                 return (variable.Name, variable.VariableType);
             }
 
-            var code = instruction.OpCode.Code;
-            switch (code) {
-                case Code.Stfld:
-                case Code.Stsfld:
-                    var field = (FieldReference)instruction.Operand;
-                    return (field.Name, field.FieldType);
-
-                case Code.Ret:
-                    if (instruction.Previous?.Previous?.OpCode.Code == Code.Tail)
-                        return null;
-                    var returnType = il.Body.Method.ReturnType;
-                    if (returnType.IsVoid())
-                        return null;
-                    return (null, returnType);
-
-                default:
+            if (instruction.OpCode.Code == Code.Ret) {
+                if (instruction.Previous?.Previous?.OpCode.Code == Code.Tail)
                     return null;
+                var returnType = il.Body.Method.ReturnType;
+                if (returnType.IsVoid())
+                    return null;
+                return (null, returnType);
             }
+
+            return null;
+        }
+
+        private void InsertReportValue(ILProcessor il, Instruction instruction, Instruction getValue, TypeReference valueType, string valueName, int line, ReportMethods flow, ref int index) {
+            il.InsertBefore(instruction, getValue);
+            il.InsertBefore(instruction, valueName != null ? il.Create(OpCodes.Ldstr, valueName) : il.Create(OpCodes.Ldnull));
+            il.InsertBefore(instruction, il.CreateLdcI4Best(line));
+            il.InsertBefore(instruction, il.CreateCall(new GenericInstanceMethod(flow.ReportValue) {
+                GenericArguments = { valueType }
+            }));
+            index += 4;
         }
 
         private void RewriteExceptionHandlers(ILProcessor il, ReportMethods flow) {

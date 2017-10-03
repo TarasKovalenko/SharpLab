@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,6 +11,7 @@ using Microsoft.Diagnostics.Runtime;
 using SharpDisasm;
 using SharpDisasm.Translators;
 using SharpLab.Runtime;
+using SharpLab.Server.Common;
 using SharpLab.Server.Decompilation.Internal;
 
 namespace SharpLab.Server.Decompilation {
@@ -18,7 +19,7 @@ namespace SharpLab.Server.Decompilation {
     public class JitAsmDecompiler : IDecompiler {
         private static readonly BindingFlags BindingFlags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
-        public string LanguageName => "JIT ASM";
+        public string LanguageName => TargetNames.JitAsm;
 
         public void Decompile(Stream assemblyStream, TextWriter codeWriter) {
             var currentSetup = AppDomain.CurrentDomain.SetupInformation;
@@ -48,7 +49,7 @@ namespace SharpLab.Server.Decompilation {
                         codeWriter.WriteLine("    ; See https://github.com/ashmind/SharpLab/issues/84.");
                         continue;
                     }
-                    DisassembleAndWrite(method, result.Status, architecture, translator, currentMethodAddressRef, codeWriter);
+                    DisassembleAndWrite(method, result, architecture, translator, currentMethodAddressRef, codeWriter);
                     codeWriter.WriteLine();
                 }
             }
@@ -78,10 +79,10 @@ namespace SharpLab.Server.Decompilation {
             return runtime.GetMethodByAddress((ulong)result.Pointer.Value.ToInt64());
         }
 
-        private void DisassembleAndWrite(ClrMethod method, Remote.MethodJitStatus status, ArchitectureMode architecture, Translator translator, Reference<ulong> methodAddressRef, TextWriter writer) {
+        private void DisassembleAndWrite(ClrMethod method, Remote.MethodJitResult result, ArchitectureMode architecture, Translator translator, Reference<ulong> methodAddressRef, TextWriter writer) {
             writer.WriteLine(method.GetFullSignature());
-            switch (status) {
-                case Remote.MethodJitStatus.GenericOpenNoAttribute:
+            switch (result.Status) {
+                case Remote.MethodJitStatus.FailedOpenGenericWithNoAttribute:
                     writer.WriteLine("    ; Open generics cannot be JIT-compiled.");
                     writer.WriteLine("    ; However you can use attribute SharpLab.Runtime.JitGeneric to specify argument types.");
                     writer.WriteLine("    ; Example: [JitGeneric(typeof(int)), JitGeneric(typeof(string))] void M<T>() { ... }.");
@@ -90,7 +91,7 @@ namespace SharpLab.Server.Decompilation {
 
             var info = FindNonEmptyHotColdInfo(method);
             if (info == null) {
-                if (status == Remote.MethodJitStatus.GenericSuccess) {
+                if (result.IsGeneric) {
                     writer.WriteLine("    ; Failed to find HotColdInfo for generic method (reference types?).");
                     writer.WriteLine("    ; If you know a solution, please comment at https://github.com/ashmind/SharpLab/issues/99.");
                     return;
@@ -147,6 +148,13 @@ namespace SharpLab.Server.Decompilation {
         private static class Remote {
             public static IReadOnlyList<MethodJitResult> GetCompiledMethods(Stream assemblyStream) {
                 var assembly = Assembly.Load(ReadAllBytes(assemblyStream));
+                // This is a security consideration as PrepareMethod calls static ctors
+                foreach (var type in assembly.DefinedTypes) {
+                    foreach (var constructor in type.DeclaredConstructors) {
+                        if (constructor.IsStatic)
+                            throw new NotSupportedException("Type " + type + " has a static constructor, which is not supported by SharpLab JIT decompiler.");
+                    }
+                }
                 var results = new List<MethodJitResult>();
                 foreach (var type in assembly.DefinedTypes) {
                     CompileAndCollectMembers(results, type);
@@ -154,33 +162,33 @@ namespace SharpLab.Server.Decompilation {
                 return results;
             }
 
-            private static void CompileAndCollectMembers(ICollection<MethodJitResult> results, Type type) {
+            private static void CompileAndCollectMembers(ICollection<MethodJitResult> results, TypeInfo type) {
                 if (type.IsGenericTypeDefinition) {
                     if (TryCompileAndCollectMembersOfGeneric(results, type))
                         return;
                 }
 
-                foreach (var constructor in type.GetConstructors(BindingFlags)) {
+                foreach (var constructor in type.DeclaredConstructors) {
                     CollectCompiledWraps(results, constructor);
                 }
 
-                foreach (var method in type.GetMethods(BindingFlags)) {
+                foreach (var method in type.DeclaredMethods) {
                     if (method.IsAbstract)
                         continue;
                     CollectCompiledWraps(results, method);
                 }
             }
 
-            private static bool TryCompileAndCollectMembersOfGeneric(ICollection<MethodJitResult> results, Type type) {
+            private static bool TryCompileAndCollectMembersOfGeneric(ICollection<MethodJitResult> results, TypeInfo type) {
                 if (type.DeclaringType?.IsGenericTypeDefinition ?? false)
                     return true; // we expect to see that one separately when we visit the parent type
 
                 var hadAttribute = false;
                 foreach (var attribute in type.GetCustomAttributes<JitGenericAttribute>(false)) {
                     hadAttribute = true;
-                    var genericInstance = type.MakeGenericType(attribute.ArgumentTypes);
+                    var genericInstance = type.MakeGenericType(attribute.ArgumentTypes).GetTypeInfo();
                     CompileAndCollectMembers(results, genericInstance.GetTypeInfo());
-                    foreach (var nested in genericInstance.GetNestedTypes(BindingFlags)) {
+                    foreach (var nested in genericInstance.DeclaredNestedTypes) {
                         CompileAndCollectMembers(results, nested);
                     }
                 }
@@ -189,7 +197,7 @@ namespace SharpLab.Server.Decompilation {
 
             private static void CollectCompiledWraps(ICollection<MethodJitResult> results, MethodBase method) {
                 if (method.DeclaringType?.IsGenericTypeDefinition ?? false) {
-                    results.Add(new MethodJitResult(method.MethodHandle, MethodJitStatus.GenericOpenNoAttribute));
+                    results.Add(new MethodJitResult(method.MethodHandle, MethodJitStatus.FailedOpenGenericWithNoAttribute, isGeneric: true));
                     return;
                 }
 
@@ -209,17 +217,14 @@ namespace SharpLab.Server.Decompilation {
                     results.Add(CompileAndWrapSimple(genericInstance));
                 }
                 if (!hasAttribute)
-                    results.Add(new MethodJitResult(method.MethodHandle, MethodJitStatus.GenericOpenNoAttribute));
+                    results.Add(new MethodJitResult(method.MethodHandle, MethodJitStatus.FailedOpenGenericWithNoAttribute, isGeneric: true));
             }
 
             private static MethodJitResult CompileAndWrapSimple(MethodBase method) {
                 var handle = method.MethodHandle;
                 RuntimeHelpers.PrepareMethod(handle);
                 var isGeneric = method.IsGenericMethod || (method.DeclaringType?.IsGenericType ?? false);
-                return new MethodJitResult(
-                    method.MethodHandle,
-                    isGeneric ? MethodJitStatus.GenericSuccess : MethodJitStatus.SimpleSuccess
-                );
+                return new MethodJitResult(method.MethodHandle, MethodJitStatus.Success, isGeneric);
             }
 
             private static byte[] ReadAllBytes(Stream stream) {
@@ -241,22 +246,25 @@ namespace SharpLab.Server.Decompilation {
 
             [Serializable]
             public struct MethodJitResult {
-                public MethodJitResult(RuntimeMethodHandle handle, MethodJitStatus status) {
+                public MethodJitResult(RuntimeMethodHandle handle, MethodJitStatus status, bool isGeneric) {
                     Handle = handle.Value;
-                    Pointer = status != MethodJitStatus.GenericOpenNoAttribute ? handle.GetFunctionPointer() : (IntPtr?)null;
+                    Pointer = status == MethodJitStatus.Success
+                            ? handle.GetFunctionPointer()
+                            : (IntPtr?)null;
                     Status = status;
+                    IsGeneric = isGeneric;
                 }
 
                 public IntPtr Handle { get; }
                 public IntPtr? Pointer { get; }
                 public MethodJitStatus Status { get; }
+                public bool IsGeneric { get; }
             }
 
             [Serializable]
             public enum MethodJitStatus {
-                SimpleSuccess,
-                GenericSuccess,
-                GenericOpenNoAttribute
+                Success,
+                FailedOpenGenericWithNoAttribute
             }
         }
     }
