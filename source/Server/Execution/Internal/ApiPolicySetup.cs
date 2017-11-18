@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
+using System.Linq.Expressions;
+using System.Net;
+using System.Reflection;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
 using Microsoft.VisualBasic.CompilerServices;
-using System.Linq.Expressions;
-using System.Reflection;
 using AshMind.Extensions;
 using SharpLab.Runtime.Internal;
 using Unbreakable;
@@ -27,9 +30,12 @@ namespace SharpLab.Server.Execution.Internal {
                       .Type(typeof(NotImplementedException), Neutral, t => t.Constructor(Allowed))
                       .Type(typeof(Type), Neutral, SetupSystemType)
             )
+            .Namespace("System.Collections.Concurrent", Neutral, SetupSystemCollectionsConcurrent)
             .Namespace("System.Diagnostics", Neutral, SetupSystemDiagnostics)
+            .Namespace("System.Globalization", Neutral, SetupSystemGlobalization)
             .Namespace("System.Reflection", Neutral, SetupSystemReflection)
             .Namespace("System.Linq.Expressions", Neutral, SetupSystemLinqExpressions)
+            .Namespace("System.Net", Neutral, SetupSystemNet)
             .Namespace("System.IO", Neutral,
                 // required by F#'s printf
                 n => n.Type(typeof(TextWriter), Neutral)
@@ -55,6 +61,7 @@ namespace SharpLab.Server.Execution.Internal {
                                 .Member(nameof(SeqModule.ToList), Allowed, CollectedEnumerableArgumentRewriter.Default)
                       )
             )
+            .Namespace("Microsoft.VisualBasic", Neutral, SetupMicrosoftVisualBasic)
             .Namespace("Microsoft.VisualBasic.CompilerServices", Neutral,
                 n => n.Type(typeof(Conversions), Allowed,
                         t => t.Member(nameof(Conversions.FromCharAndCount), Allowed, new CountArgumentRewriter("Count"))
@@ -67,6 +74,100 @@ namespace SharpLab.Server.Execution.Internal {
                       )
                       .Type(typeof(StandardModuleAttribute), Allowed)
             );
+
+        private static void SetupSystemType(TypePolicy typePolicy) {
+            typePolicy
+                .Member(nameof(Type.GetConstructor), Allowed)
+                .Member(nameof(Type.GetEvent), Allowed)
+                .Member(nameof(Type.GetField), Allowed)
+                .Member(nameof(Type.GetInterface), Allowed)
+                .Member(nameof(Type.GetMethod), Allowed)
+                .Member(nameof(Type.GetProperty), Allowed);
+        }
+
+        private static void SetupSystemCollectionsConcurrent(NamespacePolicy namespacePolicy) {
+            namespacePolicy.Type(typeof(ConcurrentDictionary<,>), Allowed,
+                t => t.Constructor(Allowed, CountArgumentRewriter.ForCapacity)
+                      .Member(nameof(ConcurrentDictionary<object, object>.AddOrUpdate), Allowed, AddCallRewriter.Default)
+                      .Member(nameof(ConcurrentDictionary<object, object>.GetOrAdd), Allowed, AddCallRewriter.Default)
+                      .Member(nameof(ConcurrentDictionary<object, object>.TryAdd), Allowed, AddCallRewriter.Default)
+            );
+        }
+
+        private static void SetupSystemDiagnostics(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(Stopwatch), Allowed, typePolicy => {
+                    foreach (var property in typeof(Stopwatch).GetProperties()) {
+                        if (!property.Name.Contains("Elapsed"))
+                            continue;
+                        typePolicy.Getter(property.Name, Allowed, new WarningMemberRewriter(
+                            "Please do not rely on Stopwatch results in SharpLab.\r\n\r\n" +
+                            "There are many checks and reports added to your code before it runs,\r\n" +
+                            "so the performance might be completely unrelated to the original code."
+                        ));
+                    }
+                });
+        }
+
+        private static void SetupSystemGlobalization(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(CultureInfo), Neutral, typePolicy => {
+                    typePolicy.Constructor(Allowed)
+                              .Member(nameof(CultureInfo.GetCultureInfo), Allowed)
+                              .Member(nameof(CultureInfo.GetCultureInfoByIetfLanguageTag), Allowed);
+                    foreach (var property in typeof(CultureInfo).GetProperties()) {
+                        typePolicy.Getter(property.Name, Allowed);
+                    }
+                });
+        }
+
+        private static void SetupSystemLinqExpressions(NamespacePolicy namespacePolicy) {
+            ForEachTypeInNamespaceOf<Expression>(type => {
+                if (type.IsEnum) {
+                    namespacePolicy.Type(type, Allowed);
+                    return;
+                }
+
+                if (!type.IsSameAsOrSubclassOf<Expression>())
+                    return;
+
+                namespacePolicy.Type(type, Allowed, typePolicy => {
+                    foreach (var method in type.GetMethods()) {
+                        if (method.Name.Contains("Compile"))
+                            typePolicy.Member(method.Name, Denied);
+                    }
+                });
+            });
+        }
+
+        private static void SetupSystemNet(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(IPAddress), Allowed);
+        }
+
+        private static void SetupSystemReflection(NamespacePolicy namespacePolicy) {
+            ForEachTypeInNamespaceOf<MemberInfo>(type => {
+                if (type.IsEnum) {
+                    namespacePolicy.Type(type, Allowed);
+                    return;
+                }
+
+                if (!type.IsSameAsOrSubclassOf<MemberInfo>())
+                    return;
+
+                namespacePolicy.Type(type, Neutral, typePolicy => {
+                    foreach (var property in type.GetProperties()) {
+                        if (property.Name.Contains("Handle"))
+                            continue;
+                        typePolicy.Getter(property.Name, Allowed);
+                    }
+                    foreach (var method in type.GetMethods()) {
+                        if (method.ReturnType.IsSameAsOrSubclassOf<MemberInfo>())
+                            typePolicy.Member(method.Name, Allowed);
+                    }
+                });
+            });
+        }
 
         private static void SetupFSharpCore(NamespacePolicy namespacePolicy) {
             namespacePolicy
@@ -121,72 +222,8 @@ namespace SharpLab.Server.Execution.Internal {
                 .Type(typeof(Unit), Allowed);
         }
 
-        private static void SetupSystemType(TypePolicy typePolicy) {
-            typePolicy
-                .Member(nameof(Type.GetConstructor), Allowed)
-                .Member(nameof(Type.GetEvent), Allowed)
-                .Member(nameof(Type.GetField), Allowed)
-                .Member(nameof(Type.GetInterface), Allowed)
-                .Member(nameof(Type.GetMethod), Allowed)
-                .Member(nameof(Type.GetProperty), Allowed);
-        }
-
-        private static void SetupSystemDiagnostics(NamespacePolicy namespacePolicy) {
-            namespacePolicy
-                .Type(typeof(Stopwatch), Allowed, typePolicy => {
-                    foreach (var property in typeof(Stopwatch).GetProperties()) {
-                        if (!property.Name.Contains("Elapsed"))
-                            continue;
-                        typePolicy.Getter(property.Name, Allowed, new WarningMemberRewriter(
-                            "Please do not rely on Stopwatch results in SharpLab.\r\n\r\n" +
-                            "There are many checks and reports added to your code before it runs,\r\n" +
-                            "so the performance might be completely unrelated to the original code."
-                        ));
-                    }
-                });
-        }
-
-        private static void SetupSystemLinqExpressions(NamespacePolicy namespacePolicy) {
-            ForEachTypeInNamespaceOf<Expression>(type => {
-                if (type.IsEnum) {
-                    namespacePolicy.Type(type, Allowed);
-                    return;
-                }
-
-                if (!type.IsSameAsOrSubclassOf<Expression>())
-                    return;
-
-                namespacePolicy.Type(type, Allowed, typePolicy => {
-                    foreach (var method in type.GetMethods()) {
-                        if (method.Name.Contains("Compile"))
-                            typePolicy.Member(method.Name, Denied);
-                    }
-                });
-            });
-        }
-
-        private static void SetupSystemReflection(NamespacePolicy namespacePolicy) {
-            ForEachTypeInNamespaceOf<MemberInfo>(type => {
-                if (type.IsEnum) {
-                    namespacePolicy.Type(type, Allowed);
-                    return;
-                }
-
-                if (!type.IsSameAsOrSubclassOf<MemberInfo>())
-                    return;
-
-                namespacePolicy.Type(type, Neutral, typePolicy => {
-                    foreach (var property in type.GetProperties()) {
-                        if (property.Name.Contains("Handle"))
-                            continue;
-                        typePolicy.Getter(property.Name, Allowed);
-                    }
-                    foreach (var method in type.GetMethods()) {
-                        if (method.ReturnType.IsSameAsOrSubclassOf<MemberInfo>())
-                            typePolicy.Member(method.Name, Allowed);
-                    }
-                });
-            });
+        private static void SetupMicrosoftVisualBasic(NamespacePolicy namespacePolicy) {
+            namespacePolicy.Type(nameof(Microsoft.VisualBasic.Strings), Allowed);
         }
 
         private static void ForEachTypeInNamespaceOf<T>(Action<Type> action) {

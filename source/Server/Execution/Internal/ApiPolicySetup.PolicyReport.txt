@@ -749,6 +749,82 @@ Microsoft.FSharp.Core
      ToString: Allowed
   UnverifiableAttribute: Denied
   VolatileFieldAttribute: Denied
+Microsoft.VisualBasic
+  AppWinStyle: Denied
+  AudioPlayMode: Denied
+  CallType: Denied
+  Collection: Denied
+  ComClassAttribute: Denied
+  CompareMethod: Denied
+  Constants: Denied
+  ControlChars: Denied
+  Conversion: Denied
+  DateAndTime: Denied
+  DateFormat: Denied
+  DateInterval: Denied
+  DueDate: Denied
+  ErrObject: Denied
+  FileAttribute: Denied
+  FileSystem: Denied
+  Financial: Denied
+  FirstDayOfWeek: Denied
+  FirstWeekOfYear: Denied
+  Globals: Denied
+  HideModuleNameAttribute: Denied
+  Information: Denied
+  Interaction: Denied
+  MsgBoxResult: Denied
+  MsgBoxStyle: Denied
+  MyGroupCollectionAttribute: Denied
+  OpenAccess: Denied
+  OpenMode: Denied
+  OpenShare: Denied
+  SpcInfo: Denied
+  Strings: Allowed
+     Asc: Allowed
+     AscW: Allowed
+     Chr: Allowed
+     ChrW: Allowed
+     Equals: Allowed
+     Filter: Allowed
+     Format: Allowed
+     FormatCurrency: Allowed
+     FormatDateTime: Allowed
+     FormatNumber: Allowed
+     FormatPercent: Allowed
+     GetChar: Allowed
+     GetHashCode: Allowed
+     GetType: Allowed
+     InStr: Allowed
+     InStrRev: Allowed
+     Join: Allowed
+     LCase: Allowed
+     Left: Allowed
+     Len: Allowed
+     LSet: Allowed
+     LTrim: Allowed
+     Mid: Allowed
+     Replace: Allowed
+     Right: Allowed
+     RSet: Allowed
+     RTrim: Allowed
+     Space: Allowed
+     Split: Allowed
+     StrComp: Allowed
+     StrConv: Allowed
+     StrDup: Allowed
+     StrReverse: Allowed
+     ToString: Allowed
+     Trim: Allowed
+     UCase: Allowed
+  TabInfo: Denied
+  TriState: Denied
+  VariantType: Denied
+  VBCodeProvider: Denied
+  VBFixedArrayAttribute: Denied
+  VBFixedStringAttribute: Denied
+  VBMath: Denied
+  VbStrConv: Denied
 Microsoft.VisualBasic.CompilerServices
   BooleanType: Denied
   ByteType: Denied
@@ -1102,7 +1178,7 @@ System
      IndexOf: Denied
      Initialize: Denied
      LastIndexOf: Denied
-     Resize: Denied
+     Resize: Allowed (CountArgumentRewriter(newSize))
      Reverse: Denied
      SetValue: Allowed
      Sort: Denied
@@ -2501,7 +2577,7 @@ System
      get_DeclaringMethod: Denied
      get_DeclaringType: Denied
      get_DefaultBinder: Denied
-     get_FullName: Denied
+     get_FullName: Allowed
      get_GenericParameterAttributes: Denied
      get_GenericParameterPosition: Denied
      get_GenericTypeArguments: Denied
@@ -2549,8 +2625,8 @@ System
      get_MemberType: Denied
      get_MetadataToken: Denied
      get_Module: Denied
-     get_Name: Denied
-     get_Namespace: Denied
+     get_Name: Allowed
+     get_Namespace: Allowed
      get_ReflectedType: Denied
      get_StructLayoutAttribute: Denied
      get_TypeHandle: Denied
@@ -2940,6 +3016,38 @@ System.Collections
   SortedList: Denied
   Stack: Denied
   StructuralComparisons: Denied
+System.Collections.Concurrent
+  BlockingCollection`1: Denied
+  ConcurrentBag`1: Denied
+  ConcurrentDictionary`2: Allowed
+     .ctor: Allowed (CountArgumentRewriter(capacity))
+     AddOrUpdate: Allowed (AddCallRewriter)
+     Clear: Allowed
+     ContainsKey: Allowed
+     Equals: Allowed
+     get_Count: Allowed
+     get_IsEmpty: Allowed
+     get_Item: Allowed
+     get_Keys: Allowed
+     get_Values: Allowed
+     GetEnumerator: Allowed
+     GetHashCode: Allowed
+     GetOrAdd: Allowed (AddCallRewriter)
+     GetType: Allowed
+     set_Item: Allowed
+     ToArray: Allowed
+     ToString: Allowed
+     TryAdd: Allowed (AddCallRewriter)
+     TryGetValue: Allowed
+     TryRemove: Allowed
+     TryUpdate: Allowed
+  ConcurrentQueue`1: Denied
+  ConcurrentStack`1: Denied
+  EnumerablePartitionerOptions: Denied
+  IProducerConsumerCollection`1: Denied
+  OrderablePartitioner`1: Denied
+  Partitioner: Denied
+  Partitioner`1: Denied
 System.Collections.Generic
   Comparer`1: Allowed
      Compare: Allowed
@@ -3764,41 +3872,41 @@ System.Globalization
   CompareInfo: Denied
   CompareOptions: Denied
   CultureInfo: Allowed
-     .ctor: Denied
+     .ctor: Allowed
      ClearCachedData: Denied
      Clone: Denied
      CreateSpecificCulture: Denied
      Equals: Denied
-     get_Calendar: Denied
-     get_CompareInfo: Denied
-     get_CultureTypes: Denied
-     get_CurrentCulture: Denied
-     get_CurrentUICulture: Denied
-     get_DateTimeFormat: Denied
-     get_DefaultThreadCurrentCulture: Denied
-     get_DefaultThreadCurrentUICulture: Denied
-     get_DisplayName: Denied
-     get_EnglishName: Denied
-     get_IetfLanguageTag: Denied
-     get_InstalledUICulture: Denied
+     get_Calendar: Allowed
+     get_CompareInfo: Allowed
+     get_CultureTypes: Allowed
+     get_CurrentCulture: Allowed
+     get_CurrentUICulture: Allowed
+     get_DateTimeFormat: Allowed
+     get_DefaultThreadCurrentCulture: Allowed
+     get_DefaultThreadCurrentUICulture: Allowed
+     get_DisplayName: Allowed
+     get_EnglishName: Allowed
+     get_IetfLanguageTag: Allowed
+     get_InstalledUICulture: Allowed
      get_InvariantCulture: Allowed
-     get_IsNeutralCulture: Denied
-     get_IsReadOnly: Denied
-     get_KeyboardLayoutId: Denied
-     get_LCID: Denied
-     get_Name: Denied
-     get_NativeName: Denied
-     get_NumberFormat: Denied
-     get_OptionalCalendars: Denied
-     get_Parent: Denied
-     get_TextInfo: Denied
-     get_ThreeLetterISOLanguageName: Denied
-     get_ThreeLetterWindowsLanguageName: Denied
-     get_TwoLetterISOLanguageName: Denied
-     get_UseUserOverride: Denied
+     get_IsNeutralCulture: Allowed
+     get_IsReadOnly: Allowed
+     get_KeyboardLayoutId: Allowed
+     get_LCID: Allowed
+     get_Name: Allowed
+     get_NativeName: Allowed
+     get_NumberFormat: Allowed
+     get_OptionalCalendars: Allowed
+     get_Parent: Allowed
+     get_TextInfo: Allowed
+     get_ThreeLetterISOLanguageName: Allowed
+     get_ThreeLetterWindowsLanguageName: Allowed
+     get_TwoLetterISOLanguageName: Allowed
+     get_UseUserOverride: Allowed
      GetConsoleFallbackUICulture: Denied
-     GetCultureInfo: Denied
-     GetCultureInfoByIetfLanguageTag: Denied
+     GetCultureInfo: Allowed
+     GetCultureInfoByIetfLanguageTag: Allowed
      GetCultures: Denied
      GetFormat: Denied
      GetHashCode: Denied
@@ -4550,6 +4658,127 @@ System.Linq.Expressions
      ReduceExtensions: Allowed
      ToString: Allowed
      Update: Allowed
+System.Net
+  AuthenticationManager: Denied
+  AuthenticationSchemes: Denied
+  AuthenticationSchemeSelector: Denied
+  Authorization: Denied
+  BindIPEndPoint: Denied
+  Cookie: Denied
+  CookieCollection: Denied
+  CookieContainer: Denied
+  CookieException: Denied
+  CredentialCache: Denied
+  DecompressionMethods: Denied
+  Dns: Denied
+  DnsEndPoint: Denied
+  DnsPermission: Denied
+  DnsPermissionAttribute: Denied
+  DownloadDataCompletedEventArgs: Denied
+  DownloadDataCompletedEventHandler: Denied
+  DownloadProgressChangedEventArgs: Denied
+  DownloadProgressChangedEventHandler: Denied
+  DownloadStringCompletedEventArgs: Denied
+  DownloadStringCompletedEventHandler: Denied
+  EndPoint: Denied
+  EndpointPermission: Denied
+  FileWebRequest: Denied
+  FileWebResponse: Denied
+  FtpStatusCode: Denied
+  FtpWebRequest: Denied
+  FtpWebResponse: Denied
+  GlobalProxySelection: Denied
+  HttpContinueDelegate: Denied
+  HttpListener: Denied
+  HttpListener+ExtendedProtectionSelector: Denied
+  HttpListenerBasicIdentity: Denied
+  HttpListenerContext: Denied
+  HttpListenerException: Denied
+  HttpListenerPrefixCollection: Denied
+  HttpListenerRequest: Denied
+  HttpListenerResponse: Denied
+  HttpListenerTimeoutManager: Denied
+  HttpRequestHeader: Denied
+  HttpResponseHeader: Denied
+  HttpStatusCode: Denied
+  HttpVersion: Denied
+  HttpWebRequest: Denied
+  HttpWebResponse: Denied
+  IAuthenticationModule: Denied
+  ICertificatePolicy: Denied
+  ICredentialPolicy: Denied
+  ICredentials: Denied
+  ICredentialsByHost: Denied
+  IPAddress: Allowed
+     .ctor: Allowed
+     Equals: Allowed
+     get_Address: Allowed
+     get_AddressFamily: Allowed
+     get_IsIPv4MappedToIPv6: Allowed
+     get_IsIPv6LinkLocal: Allowed
+     get_IsIPv6Multicast: Allowed
+     get_IsIPv6SiteLocal: Allowed
+     get_IsIPv6Teredo: Allowed
+     get_ScopeId: Allowed
+     GetAddressBytes: Allowed
+     GetHashCode: Allowed
+     GetType: Allowed
+     HostToNetworkOrder: Allowed
+     IsLoopback: Allowed
+     MapToIPv4: Allowed
+     MapToIPv6: Allowed
+     NetworkToHostOrder: Allowed
+     Parse: Allowed
+     set_Address: Allowed
+     set_ScopeId: Allowed
+     ToString: Allowed
+     TryParse: Allowed
+  IPEndPoint: Denied
+  IPHostEntry: Denied
+  IWebProxy: Denied
+  IWebProxyScript: Denied
+  IWebRequestCreate: Denied
+  NetworkAccess: Denied
+  NetworkCredential: Denied
+  OpenReadCompletedEventArgs: Denied
+  OpenReadCompletedEventHandler: Denied
+  OpenWriteCompletedEventArgs: Denied
+  OpenWriteCompletedEventHandler: Denied
+  ProtocolViolationException: Denied
+  SecurityProtocolType: Denied
+  ServicePoint: Denied
+  ServicePointManager: Denied
+  SocketAddress: Denied
+  SocketPermission: Denied
+  SocketPermissionAttribute: Denied
+  TransportContext: Denied
+  TransportType: Denied
+  UploadDataCompletedEventArgs: Denied
+  UploadDataCompletedEventHandler: Denied
+  UploadFileCompletedEventArgs: Denied
+  UploadFileCompletedEventHandler: Denied
+  UploadProgressChangedEventArgs: Denied
+  UploadProgressChangedEventHandler: Denied
+  UploadStringCompletedEventArgs: Denied
+  UploadStringCompletedEventHandler: Denied
+  UploadValuesCompletedEventArgs: Denied
+  UploadValuesCompletedEventHandler: Denied
+  WebClient: Denied
+  WebException: Denied
+  WebExceptionStatus: Denied
+  WebHeaderCollection: Denied
+  WebPermission: Denied
+  WebPermissionAttribute: Denied
+  WebProxy: Denied
+  WebRequest: Denied
+  WebRequestMethods: Denied
+  WebRequestMethods+File: Denied
+  WebRequestMethods+Ftp: Denied
+  WebRequestMethods+Http: Denied
+  WebResponse: Denied
+  WebUtility: Denied
+  WriteStreamClosedEventArgs: Denied
+  WriteStreamClosedEventHandler: Denied
 System.Reflection
   AmbiguousMatchException: Denied
   Assembly: Denied
@@ -5453,7 +5682,50 @@ System.Text
   EncoderFallbackException: Denied
   EncoderReplacementFallback: Denied
   EncoderReplacementFallbackBuffer: Denied
-  Encoding: Denied
+  Encoding: Allowed
+     Clone: Denied
+     Convert: Denied
+     Equals: Denied
+     get_ASCII: Allowed
+     get_BigEndianUnicode: Allowed
+     get_BodyName: Allowed
+     get_CodePage: Allowed
+     get_DecoderFallback: Denied
+     get_Default: Allowed
+     get_EncoderFallback: Denied
+     get_EncodingName: Allowed
+     get_HeaderName: Allowed
+     get_IsBrowserDisplay: Allowed
+     get_IsBrowserSave: Allowed
+     get_IsMailNewsDisplay: Allowed
+     get_IsMailNewsSave: Allowed
+     get_IsReadOnly: Allowed
+     get_IsSingleByte: Allowed
+     get_Unicode: Allowed
+     get_UTF32: Allowed
+     get_UTF7: Allowed
+     get_UTF8: Allowed
+     get_WebName: Allowed
+     get_WindowsCodePage: Allowed
+     GetByteCount: Denied
+     GetBytes: Denied
+     GetCharCount: Denied
+     GetChars: Denied
+     GetDecoder: Denied
+     GetEncoder: Denied
+     GetEncoding: Allowed
+     GetEncodings: Denied
+     GetHashCode: Denied
+     GetMaxByteCount: Denied
+     GetMaxCharCount: Denied
+     GetPreamble: Denied
+     GetString: Denied
+     GetType: Denied
+     IsAlwaysNormalized: Denied
+     RegisterProvider: Denied
+     set_DecoderFallback: Denied
+     set_EncoderFallback: Denied
+     ToString: Denied
   EncodingInfo: Denied
   EncodingProvider: Denied
   NormalizationForm: Denied
