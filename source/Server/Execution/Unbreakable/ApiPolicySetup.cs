@@ -5,7 +5,11 @@ using System.IO;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Net;
+using System.Numerics;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Web;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
 using Microsoft.VisualBasic.CompilerServices;
@@ -15,22 +19,12 @@ using Unbreakable.Policy;
 using Unbreakable.Policy.Rewriters;
 using SharpLab.Runtime.Internal;
 
-namespace SharpLab.Server.Execution.Internal {
-    using System.Numerics;
+namespace SharpLab.Server.Execution.Unbreakable {
     using static ApiAccess;
 
     public static class ApiPolicySetup {
         public static ApiPolicy CreatePolicy() => ApiPolicy.SafeDefault()
-            .Namespace("System", Neutral,
-                n => n.Type(typeof(Console), Neutral,
-                        t => t.Member(nameof(Console.Write), Allowed)
-                              .Member(nameof(Console.WriteLine), Allowed)
-                              // required by F#'s printf
-                              .Getter(nameof(Console.Out), Allowed)
-                     ).Type(typeof(STAThreadAttribute), Allowed)
-                      .Type(typeof(NotImplementedException), Neutral, t => t.Constructor(Allowed))
-                      .Type(typeof(Type), Neutral, SetupSystemType)
-            )
+            .Namespace("System", Neutral, SetupSystem)
             .Namespace("System.Collections.Concurrent", Neutral, SetupSystemCollectionsConcurrent)
             .Namespace("System.Diagnostics", Neutral, SetupSystemDiagnostics)
             .Namespace("System.Globalization", Neutral, SetupSystemGlobalization)
@@ -42,6 +36,9 @@ namespace SharpLab.Server.Execution.Internal {
                 // required by F#'s printf
                 n => n.Type(typeof(TextWriter), Neutral)
             )
+            .Namespace("System.Security.Cryptography", Neutral, SetupSystemSecurityCryptography)
+            .Namespace("System.Text", Neutral, SetupSystemText)
+            .Namespace("System.Web", Neutral, SetupSystemWeb)
             .Namespace("SharpLab.Runtime.Internal", Neutral,
                 n => n.Type(typeof(Flow), Neutral,
                          t => t.Member(nameof(Flow.ReportException), Allowed, NoGuardRewriter.Default)
@@ -76,6 +73,30 @@ namespace SharpLab.Server.Execution.Internal {
                       )
                       .Type(typeof(StandardModuleAttribute), Allowed)
             );
+
+        private static void SetupSystem(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(BitConverter), Neutral,
+                    t => t.Member(nameof(BitConverter.GetBytes), Allowed, ArrayReturnRewriter.Default)
+                )
+                .Type(typeof(Console), Neutral,
+                    t => t.Member(nameof(Console.Write), Allowed)
+                          .Member(nameof(Console.WriteLine), Allowed)
+                          // required by F#'s printf
+                          .Getter(nameof(Console.Out), Allowed)
+                )
+                .Type(typeof(ReadOnlySpan<>), Allowed,
+                    t => t.Member(nameof(ReadOnlySpan<object>.DangerousCreate), Denied)
+                )
+                .Type(typeof(ReadOnlySpan<>.Enumerator), Allowed)
+                .Type(typeof(Span<>), Allowed,
+                    t => t.Member(nameof(ReadOnlySpan<object>.DangerousCreate), Denied)
+                )
+                .Type(typeof(Span<>.Enumerator), Allowed)
+                .Type(typeof(STAThreadAttribute), Allowed)
+                .Type(typeof(NotImplementedException), Neutral, t => t.Constructor(Allowed))
+                .Type(typeof(Type), Neutral, SetupSystemType);
+        }
 
         private static void SetupSystemType(TypePolicy typePolicy) {
             typePolicy
@@ -174,6 +195,45 @@ namespace SharpLab.Server.Execution.Internal {
                     }
                 });
             });
+        }
+
+        private static void SetupSystemSecurityCryptography(NamespacePolicy namespacePolicy) {
+            ForEachTypeInNamespaceOf<HashAlgorithm>(type => {
+                if (!type.IsSameAsOrSubclassOf<HashAlgorithm>())
+                    return;
+
+                namespacePolicy.Type(type, Neutral,
+                    t => t.Constructor(Allowed, DisposableReturnRewriter.Default)
+                          .Member(nameof(HashAlgorithm.ComputeHash), Allowed, ArrayReturnRewriter.Default)
+                );
+            });
+        }
+
+        private static void SetupSystemText(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(Encoding), Neutral,
+                    // TODO: Move to Unbreakable
+                    t => t.Member(nameof(Encoding.GetBytes), Allowed, ArrayReturnRewriter.Default)
+                );
+        }
+
+        private static void SetupSystemWeb(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(HttpServerUtility), Neutral,
+                    t => t.Member(nameof(HttpServerUtility.HtmlDecode), Allowed)
+                          .Member(nameof(HttpServerUtility.HtmlEncode), Allowed).Member(nameof(HttpServerUtility.UrlDecode), Allowed)
+                          .Member(nameof(HttpServerUtility.UrlEncode), Allowed)
+                          .Member(nameof(HttpServerUtility.UrlTokenDecode), Allowed, ArrayReturnRewriter.Default)
+                          .Member(nameof(HttpServerUtility.UrlTokenEncode), Allowed)
+                )
+                .Type(typeof(HttpUtility), Neutral,
+                    t => t.Member(nameof(HttpUtility.HtmlDecode), Allowed)
+                          .Member(nameof(HttpUtility.HtmlEncode), Allowed)
+                          .Member(nameof(HttpUtility.UrlDecode), Allowed)
+                          .Member(nameof(HttpUtility.UrlEncode), Allowed)
+                          .Member(nameof(HttpUtility.HtmlAttributeEncode), Allowed)
+                          .Member(nameof(HttpUtility.JavaScriptStringEncode), Allowed)
+                );
         }
 
         private static void SetupFSharpCore(NamespacePolicy namespacePolicy) {

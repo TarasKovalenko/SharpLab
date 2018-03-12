@@ -1,20 +1,18 @@
 import './polyfills/iterable-dom.js';
 import trackFeature from './helpers/track-feature.js';
-
 import languages from './helpers/languages.js';
 import targets from './helpers/targets.js';
 import getBranchesAsync from './server/get-branches-async.js';
-
 import state from './state/index.js';
 import url from './state/handlers/url.js';
 import defaults from './state/handlers/defaults.js';
-
 import uiAsync from './ui/index.js';
 
 /* eslint-disable no-invalid-this */
 
 function getResultType(target) {
     switch (target) {
+        case targets.verify: return 'verify';
         case targets.ast: return 'ast';
         case targets.run: return 'run';
         default: return 'code';
@@ -146,11 +144,12 @@ async function createAppAsync() {
                 };
             },
             status() {
-                if (!this.online)
-                    return { name: 'offline', color: '#aaa' };
-                if (!this.result.success)
-                    return { name: 'error', color: '#dc3912' };
-                return { name: 'default', color: '#4684ee' };
+                const error = !this.result.success;
+                return {
+                    online: this.online,
+                    error,
+                    color:  this.online ? (!error ? '#4684ee' : '#dc3912') : '#aaa'
+                };
             }
         },
         methods: { applyUpdateWait, applyUpdateResult, applyServerError, applyConnectionChange, applyAstHover }

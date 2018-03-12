@@ -44,9 +44,9 @@ namespace SharpLab.Tests {
         [InlineData("NullPropagation.ToTernary.cs2cs")]
         [InlineData("Simple.cs2il")]
         [InlineData("Simple.vb2vb")]
-        [InlineData("Module.vb2vb")]        
-        [InlineData("Lambda.CallInArray.cs2cs")] // https://github.com/ashmind/SharpLab/issues/9        
-        [InlineData("Cast.ExplicitOperatorOnNull.cs2cs")] // https://github.com/ashmind/SharpLab/issues/20        
+        [InlineData("Module.vb2vb")]
+        [InlineData("Lambda.CallInArray.cs2cs")] // https://github.com/ashmind/SharpLab/issues/9
+        [InlineData("Cast.ExplicitOperatorOnNull.cs2cs")] // https://github.com/ashmind/SharpLab/issues/20
         [InlineData("Goto.TryWhile.cs2cs")] // https://github.com/ashmind/SharpLab/issues/123
         [InlineData("Nullable.OperatorLifting.cs2cs")] // https://github.com/ashmind/SharpLab/issues/159
         [InlineData("Finalizer.Exception.cs2il")] // https://github.com/ashmind/SharpLab/issues/205
@@ -84,6 +84,31 @@ namespace SharpLab.Tests {
         }
 
         [Theory]
+        [InlineData(LanguageNames.CSharp,"/// <summary><see cref=\"Incorrect\"/></summary>\r\nclass C {}", "CS1574")] // https://github.com/ashmind/SharpLab/issues/219
+        [InlineData(LanguageNames.VisualBasic, "''' <summary><see cref=\"Incorrect\"/></summary>\r\nPublic Class C\r\nEnd Class", "BC42309")]
+        public async Task SlowUpdate_ReturnsExpectedWarnings_ForXmlDocumentation(string sourceLanguageName, string code, string expectedWarningId) {
+            var driver = MirrorSharpTestDriver.New(MirrorSharpOptions).SetText(code);
+            await driver.SendSetOptionsAsync(sourceLanguageName, TargetNames.IL);
+
+            var result = await driver.SendSlowUpdateAsync<string>();
+            Assert.Equal(
+                new[] { new { Severity = "warning", Id = expectedWarningId } },
+                result.Diagnostics.Select(d => new { d.Severity, d.Id }).ToArray()
+            );
+        }
+
+        [Theory]
+        [InlineData(LanguageNames.CSharp, "class C {}")]
+        [InlineData(LanguageNames.VisualBasic, "Public Class C\r\nEnd Class")]
+        public async Task SlowUpdate_DoesNotReturnWarnings_ForCodeWithoutXmlDocumentation(string sourceLanguageName, string code) {
+            var driver = MirrorSharpTestDriver.New(MirrorSharpOptions).SetText(code);
+            await driver.SendSetOptionsAsync(sourceLanguageName, TargetNames.IL);
+
+            var result = await driver.SendSlowUpdateAsync<string>();
+            Assert.Empty(result.Diagnostics);
+        }
+
+        [Theory]
         [InlineData("FSharp.EmptyType.fs2il")]
         [InlineData("FSharp.SimpleMethod.fs2cs")] // https://github.com/ashmind/SharpLab/issues/119
         [InlineData("FSharp.NotNull.fs2cs")]
@@ -106,6 +131,7 @@ namespace SharpLab.Tests {
         [InlineData("JitAsm.ArrayElement.cs2asm")]
         [InlineData("JitAsm.AsyncRegression.cs2asm")]
         [InlineData("JitAsm.ConsoleWrite.cs2asm")]
+        [InlineData("JitAsm.JumpBack.cs2asm")] // https://github.com/ashmind/SharpLab/issues/229
         [InlineData("JitAsm.OpenGenerics.cs2asm")]
         [InlineData("JitAsm.GenericMethodWithAttribute.cs2asm")]
         [InlineData("JitAsm.GenericClassWithAttribute.cs2asm")]
@@ -173,10 +199,10 @@ namespace SharpLab.Tests {
             private static readonly IDictionary<string, string> LanguageMap = new Dictionary<string, string> {
                 { "cs",  LanguageNames.CSharp },
                 { "vb",  LanguageNames.VisualBasic },
-                { "fs",  "F#" },
-                { "il",  "IL" },
-                { "asm", "JIT ASM" },
-                { "ast", "AST" },
+                { "fs",  LanguageNames.FSharp },
+                { "il",  TargetNames.IL },
+                { "asm", TargetNames.JitAsm },
+                { "ast", TargetNames.Ast },
             };
             public string Original { get; }
             public string Expected { get; }
