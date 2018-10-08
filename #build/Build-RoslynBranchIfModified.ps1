@@ -37,26 +37,25 @@ if (Test-Path "$sourceRoot\Binaries\Release") {
     Remove-Item "$sourceRoot\Binaries\Release" -Recurse -Force
 }
 
+Write-Output "Building '$branchName'..."
+
+$buildLogPath = "$artifactsRoot\BranchBuild.log"
+if (Test-Path $buildLogPath) {
+    Remove-Item $buildLogPath
+}
+
 function Build-Project(
-    [Parameter(Mandatory=$true)][string[]] $candidateProjectPaths,
-    [string] $msbuildArgs
+    [Parameter(Mandatory=$true)][string[]] $projectPathCandidates
 ) {
-    $projectPath = @($candidateProjectPaths | ? { Test-Path "$sourceRoot\$_" })[0];
+    $projectPath = $projectPathCandidates | % { "$sourceRoot\$_" } | ? { Test-Path $_ } | select -first 1
     if (!$projectPath) {
-        throw New-Object BranchBuildException("Project not found: none of @($candidateProjectPaths) matched.", $buildLogPath)
+        throw New-Object BranchBuildException("Not of paths ($projectPathCandidates) was found.", $buildLogPath)
     }
-    "  msbuild $projectPath $msbuildArgs" | Out-Default
-    &$MSBuild $projectPath /m /p:Configuration=Release /p:DelaySign=false /p:SignAssembly=false /p:NeedsFakeSign=false /p:SolutionDir="$sourceRoot\Src" >> "$buildLogPath"
+    "  dotnet msbuild $projectPath" | Out-Default
+    dotnet msbuild $projectPath /m /nodeReuse:false /p:Configuration=Release /p:DelaySign=false /p:SignAssembly=false /p:NeedsFakeSign=false /p:UseRoslynAnalyzers=false /p:SolutionDir="$sourceRoot\Src" >> "$buildLogPath"
     if ($LastExitCode -ne 0) {
         throw New-Object BranchBuildException("Build failed, see $buildLogPath", $buildLogPath)
     }
-}
-
-Write-Output "Building '$branchName'..."
-
-$buildLogPath = "$(Resolve-Path "$sourceRoot\..")\$([IO.Path]::GetFileName($sourceRoot))-$branchFsName.build.log"
-if (Test-Path $buildLogPath) {
-    Remove-Item $buildLogPath
 }
 
 Push-Location $sourceRoot
@@ -66,13 +65,20 @@ try {
     }
     Write-Output "  .\Restore.cmd"
     .\Restore.cmd >> "$buildLogPath"
-        
-    Build-Project "Src\Compilers\Core\Portable\CodeAnalysis.csproj"
-    Build-Project "Src\Compilers\CSharp\Portable\CSharpCodeAnalysis.csproj"
-    Build-Project "src\Features\CSharp\Portable\CSharpFeatures.csproj"
-    Build-Project "Src\Tools\Source\CompilerGeneratorTools\Source\VisualBasicSyntaxGenerator\VisualBasicSyntaxGenerator.vbproj"
-    Build-Project "Src\Compilers\VisualBasic\Portable\BasicCodeAnalysis.vbproj"
-    Build-Project "src\Features\VisualBasic\Portable\BasicFeatures.vbproj"
+
+    $givtPath = '.\build\Targets\RepoToolset\GenerateInternalsVisibleTo.targets'
+    if (Test-Path $givtPath) {
+        Write-Output "  fixing GenerateInternalsVisibleTo.targets"
+        $givtContent = Get-Content $givtPath -Raw
+        Set-Content $givtPath $($givtContent -replace ', PublicKey=\$\(PublicKey\)','')
+    }
+    
+    Build-Project @("Src\Compilers\Core\Portable\Microsoft.CodeAnalysis.csproj", "Src\Compilers\Core\Portable\CodeAnalysis.csproj")
+    Build-Project @("Src\Compilers\CSharp\Portable\Microsoft.CodeAnalysis.CSharp.csproj", "Src\Compilers\CSharp\Portable\CSharpCodeAnalysis.csproj")
+    Build-Project @("src\Features\CSharp\Portable\Microsoft.CodeAnalysis.CSharp.Features.csproj", "src\Features\CSharp\Portable\CSharpFeatures.csproj")
+    Build-Project @("Src\Tools\Source\CompilerGeneratorTools\Source\VisualBasicSyntaxGenerator\VisualBasicSyntaxGenerator.vbproj")
+    Build-Project @("Src\Compilers\VisualBasic\Portable\Microsoft.CodeAnalysis.VisualBasic.vbproj", "Src\Compilers\VisualBasic\Portable\BasicCodeAnalysis.vbproj")
+    Build-Project @("src\Features\VisualBasic\Portable\Microsoft.CodeAnalysis.VisualBasic.Features.vbproj", "src\Features\VisualBasic\Portable\BasicFeatures.vbproj")
 }
 finally {
     Pop-Location

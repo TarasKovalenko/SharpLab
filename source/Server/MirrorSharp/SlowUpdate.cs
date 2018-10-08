@@ -14,6 +14,7 @@ using SharpLab.Server.Compilation;
 using SharpLab.Server.Decompilation;
 using SharpLab.Server.Decompilation.AstOnly;
 using SharpLab.Server.Execution;
+using SharpLab.Server.Explanation;
 
 namespace SharpLab.Server.MirrorSharp {
     [UsedImplicitly(ImplicitUseKindFlags.InstantiatedNoFixedConstructorSignature)]
@@ -22,6 +23,7 @@ namespace SharpLab.Server.MirrorSharp {
         private readonly IReadOnlyDictionary<string, IDecompiler> _decompilers;
         private readonly IReadOnlyDictionary<string, IAstTarget> _astTargets;
         private readonly IExecutor _executor;
+        private readonly IExplainer _explainer;
         private readonly RecyclableMemoryStreamManager _memoryStreamManager;
 
         public SlowUpdate(
@@ -29,6 +31,7 @@ namespace SharpLab.Server.MirrorSharp {
             IReadOnlyCollection<IDecompiler> decompilers,
             IReadOnlyCollection<IAstTarget> astTargets,
             IExecutor executor,
+            IExplainer explainer,
             RecyclableMemoryStreamManager memoryStreamManager
         ) {
             _compiler = compiler;
@@ -38,43 +41,56 @@ namespace SharpLab.Server.MirrorSharp {
                 .ToDictionary(x => x.languageName, x => x.target);
             _executor = executor;
             _memoryStreamManager = memoryStreamManager;
+            _explainer = explainer;
         }
 
         public async Task<object> ProcessAsync(IWorkSession session, IList<Diagnostic> diagnostics, CancellationToken cancellationToken) {
             var targetName = session.GetTargetName();
-            if (targetName == TargetNames.Ast) {
+            if (targetName == TargetNames.Ast || targetName == TargetNames.Explain) {
                 var astTarget = _astTargets.GetValueOrDefault(session.LanguageName);
-                return await astTarget.GetAstAsync(session, cancellationToken).ConfigureAwait(false);
+                var ast = await astTarget.GetAstAsync(session, cancellationToken).ConfigureAwait(false);
+                if (targetName == TargetNames.Explain)
+                    return await _explainer.ExplainAsync(ast, session, cancellationToken).ConfigureAwait(false);
+                return ast;
             }
 
             if (diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
                 return null;
 
-            if (targetName == TargetNames.Verify)
-                return "✔️ Compilation completed.";
+            if (targetName == LanguageNames.VisualBasic)
+                return VisualBasicNotAvailable;
 
-            if (targetName != TargetNames.Run && !_decompilers.ContainsKey(targetName))
+            if (targetName != TargetNames.Run && targetName != TargetNames.Verify && !_decompilers.ContainsKey(targetName))
                 throw new NotSupportedException($"Target '{targetName}' is not (yet?) supported by this branch.");
 
             MemoryStream assemblyStream = null;
             MemoryStream symbolStream = null;
             try {
                 assemblyStream = _memoryStreamManager.GetStream();
-                if (targetName == TargetNames.Run)
+                if (targetName == TargetNames.Run || targetName == TargetNames.IL)
                     symbolStream = _memoryStreamManager.GetStream();
 
-                if (!await _compiler.TryCompileToStreamAsync(assemblyStream, symbolStream, session, diagnostics, cancellationToken).ConfigureAwait(false)) {
+                var compiled = await _compiler.TryCompileToStreamAsync(assemblyStream, symbolStream, session, diagnostics, cancellationToken).ConfigureAwait(false);
+                if (!compiled.assembly) {
                     assemblyStream.Dispose();
                     symbolStream?.Dispose();
                     return null;
                 }
+
+                if (targetName == TargetNames.Verify) {
+                    assemblyStream.Dispose();
+                    symbolStream?.Dispose();
+                    return "✔️ Compilation completed.";
+                }
+
                 assemblyStream.Seek(0, SeekOrigin.Begin);
                 symbolStream?.Seek(0, SeekOrigin.Begin);
+                var streams = new CompilationStreamPair(assemblyStream, compiled.symbols ? symbolStream : null);
                 if (targetName == TargetNames.Run)
-                    return _executor.Execute(assemblyStream, symbolStream, session);
+                    return _executor.Execute(streams, session);
 
                 // it's fine not to Dispose() here -- MirrorSharp will dispose it after calling WriteResult()
-                return assemblyStream;
+                return streams;
             }
             catch {
                 assemblyStream?.Dispose();
@@ -88,16 +104,22 @@ namespace SharpLab.Server.MirrorSharp {
                 writer.WriteValue((string)null);
                 return;
             }
-            
-            var targetName = session.GetTargetName();
-            if (targetName == TargetNames.Verify) {
-                writer.WriteValue((string)result);
+
+            if (result is string s)
+            {
+                writer.WriteValue(s);
                 return;
             }
 
+            var targetName = session.GetTargetName();
             if (targetName == TargetNames.Ast) {
                 var astTarget = _astTargets.GetValueOrDefault(session.LanguageName);
                 astTarget.SerializeAst(result, writer, session);
+                return;
+            }
+
+            if (targetName == TargetNames.Explain) {
+                _explainer.Serialize((ExplanationResult)result, writer);
                 return;
             }
 
@@ -107,10 +129,16 @@ namespace SharpLab.Server.MirrorSharp {
             }
 
             var decompiler = _decompilers[targetName];
-            using (var stream = (Stream)result)
+            using (var streams = (CompilationStreamPair)result)
             using (var stringWriter = writer.OpenString()) {
-                decompiler.Decompile(stream, stringWriter);
+                decompiler.Decompile(streams, stringWriter);
             }
         }
+
+        private const string VisualBasicNotAvailable =
+            "' Unfortunately, Visual Basic decompilation is no longer supported.\r\n" +
+            "' \r\n" +
+            "' All decompilation in SharpLab is provided by ILSpy, and latest ILSpy does not suport VB.\r\n" +
+            "' If you are interested in VB, please discuss or contribute at https://github.com/icsharpcode/ILSpy.";
     }
 }

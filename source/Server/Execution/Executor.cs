@@ -9,72 +9,90 @@ using AshMind.Extensions;
 using Microsoft.IO;
 using MirrorSharp.Advanced;
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Unbreakable;
 using Unbreakable.Runtime;
 using SharpLab.Runtime.Internal;
 using SharpLab.Server.Common;
 using SharpLab.Server.Execution.Internal;
-using SharpLab.Server.Execution.Unbreakable;
 using SharpLab.Server.Monitoring;
 using IAssemblyResolver = Mono.Cecil.IAssemblyResolver;
 
 namespace SharpLab.Server.Execution {
     public class Executor : IExecutor {
         private readonly IAssemblyResolver _assemblyResolver;
+        private readonly ISymbolReaderProvider _symbolReaderProvider;
+        private readonly AssemblyGuardSettings _guardSettings;
         private readonly IReadOnlyCollection<IAssemblyRewriter> _rewriters;
         private readonly RecyclableMemoryStreamManager _memoryStreamManager;
+        private readonly ExecutionResultSerializer _serializer;
         private readonly IMonitor _monitor;
 
-        public Executor(IAssemblyResolver assemblyResolver, IReadOnlyCollection<IAssemblyRewriter> rewriters, RecyclableMemoryStreamManager memoryStreamManager, IMonitor monitor) {
+        public Executor(
+            IAssemblyResolver assemblyResolver,
+            ISymbolReaderProvider symbolReaderProvider,
+            ApiPolicy apiPolicy,
+            IReadOnlyCollection<IAssemblyRewriter> rewriters,
+            RecyclableMemoryStreamManager memoryStreamManager,
+            ExecutionResultSerializer serializer,
+            IMonitor monitor
+        ) {
             _assemblyResolver = assemblyResolver;
+            _symbolReaderProvider = symbolReaderProvider;
+            _guardSettings = CreateGuardSettings(apiPolicy);
             _rewriters = rewriters;
             _memoryStreamManager = memoryStreamManager;
+            _serializer = serializer;
             _monitor = monitor;
         }
 
-        public ExecutionResult Execute(Stream assemblyStream, Stream symbolStream, IWorkSession session) {
-            AssemblyDefinition assembly;
-            using (assemblyStream)
-            using (symbolStream) {
-                assembly = AssemblyDefinition.ReadAssembly(assemblyStream, new ReaderParameters {
-                    ReadSymbols = true,
-                    SymbolStream = symbolStream,
-                    AssemblyResolver = _assemblyResolver
-                });
-            }
-            /*
-            #if DEBUG
-            assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + "-before-rewrite.dll");
-            #endif
-            */
-            foreach (var rewriter in _rewriters) {
-                rewriter.Rewrite(assembly, session);
-            }
-            if (assembly.EntryPoint == null)
-                throw new ArgumentException("Failed to find an entry point (Main?) in assembly.", nameof(assemblyStream));
+        public ExecutionResult Execute(CompilationStreamPair streams, IWorkSession session) {
+            var readerParameters = new ReaderParameters {
+                ReadSymbols = streams.SymbolStream != null,
+                SymbolStream = streams.SymbolStream,
+                AssemblyResolver = _assemblyResolver,
+                SymbolReaderProvider = streams.SymbolStream != null ? _symbolReaderProvider : null
+            };
 
-            var guardToken = AssemblyGuard.Rewrite(assembly, GuardSettings);
-
-            using (var rewrittenStream = _memoryStreamManager.GetStream()) {
-                assembly.Write(rewrittenStream);
+            using (streams)
+            using (var assembly = AssemblyDefinition.ReadAssembly(streams.AssemblyStream, readerParameters)) {
                 /*
                 #if DEBUG
-                assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + ".dll");
+                assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + "-before-rewrite.dll");
                 #endif
                 */
-                rewrittenStream.Seek(0, SeekOrigin.Begin);
-
-                var currentSetup = AppDomain.CurrentDomain.SetupInformation;
-                using (var context = AppDomainContext.Create(new AppDomainSetup {
-                    ApplicationBase = currentSetup.ApplicationBase,
-                    PrivateBinPath = currentSetup.PrivateBinPath
-                })) {
-                    context.LoadAssembly(LoadMethod.LoadFrom, Assembly.GetExecutingAssembly().GetAssemblyFile().FullName);
-                    var (result, exception) = RemoteFunc.Invoke(context.Domain, rewrittenStream, guardToken, Remote.Execute);
-                    if (ShouldMonitorException(exception))
-                        _monitor.Exception(exception, session);
-                    return result;
+                foreach (var rewriter in _rewriters) {
+                    rewriter.Rewrite(assembly, session);
                 }
+                if (assembly.EntryPoint == null)
+                    throw new ArgumentException("Failed to find an entry point (Main?) in assembly.", nameof(streams));
+
+                var guardToken = AssemblyGuard.Rewrite(assembly, _guardSettings);
+                using (var rewrittenStream = _memoryStreamManager.GetStream()) {
+                    assembly.Write(rewrittenStream);
+                    /*
+                    #if DEBUG
+                    assembly.Write(@"d:\Temp\assembly\" + DateTime.Now.Ticks + ".dll");
+                    #endif
+                    */
+                    rewrittenStream.Seek(0, SeekOrigin.Begin);
+
+                    return ExecuteInAppDomain(rewrittenStream, guardToken, session);
+                }
+            }
+        }
+
+        private ExecutionResult ExecuteInAppDomain(MemoryStream assemblyStream, RuntimeGuardToken guardToken, IWorkSession session) {
+            var currentSetup = AppDomain.CurrentDomain.SetupInformation;
+            using (var context = AppDomainContext.Create(new AppDomainSetup {
+                ApplicationBase = currentSetup.ApplicationBase,
+                PrivateBinPath = currentSetup.PrivateBinPath
+            })) {
+                context.LoadAssembly(LoadMethod.LoadFrom, Assembly.GetExecutingAssembly().GetAssemblyFile().FullName);
+                var (result, exception) = RemoteFunc.Invoke(context.Domain, assemblyStream, guardToken, CurrentProcess.Id, Remote.Execute);
+                if (ShouldMonitorException(exception))
+                    _monitor.Exception(exception, session);
+                return result;
             }
         }
 
@@ -84,84 +102,21 @@ namespace SharpLab.Server.Execution {
         }
 
         public void Serialize(ExecutionResult result, IFastJsonWriter writer) {
-            writer.WriteStartObject();
-            writer.WritePropertyStartArray("output");
-            SerializeOutput(result.Output, writer);
-            writer.WriteEndArray();
-
-            writer.WritePropertyStartArray("flow");
-            foreach (var step in result.Flow) {
-                SerializeFlowStep(step, writer);
-            }
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-        }
-
-        private void SerializeFlowStep(Flow.Step step, IFastJsonWriter writer) {
-            if (step.Notes == null && step.Exception == null) {
-                writer.WriteValue(step.LineNumber);
-                return;
-            }
-
-            writer.WriteStartObject();
-            writer.WriteProperty("line", step.LineNumber);
-            if (step.LineSkipped)
-                writer.WriteProperty("skipped", true);
-            if (step.Notes != null)
-                writer.WriteProperty("notes", step.Notes);
-            if (step.Exception != null)
-                writer.WriteProperty("exception", step.Exception.GetType().Name);
-            writer.WriteEndObject();
-        }
-
-        private void SerializeOutput(IReadOnlyList<object> output, IFastJsonWriter writer) {
-            TextWriter openStringWriter = null;
-            foreach (var item in output) {
-                switch (item) {
-                    case InspectionResult inspection:
-                        if (openStringWriter != null) {
-                            openStringWriter.Close();
-                            openStringWriter = null;
-                        }
-                        writer.WriteStartObject();
-                        writer.WriteProperty("type", "inspection");
-                        writer.WriteProperty("title", inspection.Title);
-                        writer.WriteProperty("value", inspection.Value);
-                        writer.WriteEndObject();
-                        break;
-                    case string @string:
-                        if (openStringWriter == null)
-                            openStringWriter = openStringWriter ?? writer.OpenString();
-                        openStringWriter.Write(@string);
-                        break;
-                    case char[] chars:
-                        if (openStringWriter == null)
-                            openStringWriter = writer.OpenString();
-                        openStringWriter.Write(chars);
-                        break;
-                    case null:
-                        break;
-                    default:
-                        if (openStringWriter != null) {
-                            openStringWriter.Close();
-                            openStringWriter = null;
-                        }
-                        writer.WriteValue("Unsupported output object type: " + item.GetType().Name);
-                        break;
-                }
-            }
-            openStringWriter?.Close();
+            _serializer.Serialize(result, writer);
         }
 
         private static class Remote {
-            public static ExecutionResultWrapper Execute(Stream assemblyStream, RuntimeGuardToken guardToken) {
+            public static unsafe ExecutionResultWrapper Execute(Stream assemblyStream, RuntimeGuardToken guardToken, int processId) {
                 try {
                     Console.SetOut(Output.Writer);
+                    InspectionSettings.CurrentProcessId = processId;
 
                     var assembly = Assembly.Load(ReadAllBytes(assemblyStream));
                     var main = assembly.EntryPoint;
                     using (guardToken.Scope(NewRuntimeGuardSettings())) {
                         var args = main.GetParameters().Length > 0 ? new object[] { new string[0] } : null;
+                        byte* stackStart = stackalloc byte[1];
+                        InspectionSettings.StackStart = (ulong)stackStart;
                         var result = main.Invoke(null, args);
                         if (main.ReturnType != typeof(void))
                             result.Inspect("Return");
@@ -171,6 +126,9 @@ namespace SharpLab.Server.Execution {
                 catch (Exception ex) {
                     if (ex is TargetInvocationException invocationEx)
                         ex = invocationEx.InnerException;
+
+                    if (ex is RegexMatchTimeoutException)
+                        ex = new TimeGuardException("Time limit reached while evaluating a Regex.\r\nNote that timeout was added by SharpLab — in real code this would not throw, but might run for a very long time.", ex);
 
                     Flow.ReportException(ex);
                     ex.Inspect("Exception");
@@ -220,15 +178,15 @@ namespace SharpLab.Server.Execution {
             }
         }
 
-        private static readonly AssemblyGuardSettings GuardSettings = ((Func<AssemblyGuardSettings>)(() => {
+        private static AssemblyGuardSettings CreateGuardSettings(ApiPolicy apiPolicy) {
             var settings = AssemblyGuardSettings.DefaultForCSharpAssembly();
-            settings.ApiPolicy = ApiPolicySetup.CreatePolicy();
+            settings.ApiPolicy = apiPolicy;
             settings.AllowExplicitLayoutInTypesMatchingPattern = new Regex(settings.AllowExplicitLayoutInTypesMatchingPattern.ToString(), RegexOptions.Compiled);
             settings.AllowPointerOperationsInTypesMatchingPattern = new Regex(settings.AllowPointerOperationsInTypesMatchingPattern.ToString(), RegexOptions.Compiled);
             settings.AllowCustomTypesMatchingPatternInSystemNamespaces = new Regex(
-                settings.AllowCustomTypesMatchingPatternInSystemNamespaces.ToString() + @"|System\.Range", RegexOptions.Compiled
+                settings.AllowCustomTypesMatchingPatternInSystemNamespaces.ToString() + @"|System\.Range|System\.Index|System\.Extensions", RegexOptions.Compiled
             );
             return settings;
-        }))();
+        }
     }
 }

@@ -1,11 +1,13 @@
 import Vue from 'vue';
 import './mixins/format-date.js';
+import './mixins/markdown.js';
 import hooks from './hooks/registry.js';
 import './components/app-code-edit.js';
 import './components/app-diagnostic.js';
 import './components/app-code-view.js';
 import './components/app-ast-view.js';
 import './components/app-verify-view.js';
+import './components/app-explain-view.js';
 import './components/app-output-view.js';
 import './directives/app-class-toggle.js';
 import './hooks/app-cloak.js';

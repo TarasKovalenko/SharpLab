@@ -86,6 +86,7 @@ try {
     Write-Output "  Server.Azure.csproj"
     dotnet build "$sourceRoot\Server.Azure\Server.Azure.csproj" `
         /p:AllowedReferenceRelatedFileExtensions=.pdb `
+        /p:UnbreakablePolicyReportEnabled=false `
         /p:Configuration=Release
     if ($LastExitCode -ne 0) {
         Write-Error "SharpLab build failed."
@@ -154,7 +155,7 @@ try {
                     -IfBuilt {
                         Write-Output "Getting branch info..."
                         $branchInfo = @{
-                            name    = $_
+                            name       = $_
                             repository = $repositoryConfig.Name
                             commits = @(@{
                                 hash    =  (Invoke-Git $repositorySourceRoot log "$_" -n 1 --pretty=format:"%H" )

@@ -1,4 +1,10 @@
 function renderValue(value, type) {
+    if (value === null)
+        return "null";
+
+    if (typeof value !== 'string')
+        return value;
+
     if (type === 'trivia')
         return escapeTrivia(value);
 

@@ -2,7 +2,9 @@ import './polyfills/iterable-dom.js';
 import trackFeature from './helpers/track-feature.js';
 import languages from './helpers/languages.js';
 import targets from './helpers/targets.js';
+import extractRangesFromIL from './helpers/extract-ranges-from-il.js';
 import getBranchesAsync from './server/get-branches-async.js';
+import { getBranchDisplayName, groupAndSortBranches } from './ui/branches.js';
 import state from './state/index.js';
 import url from './state/handlers/url.js';
 import defaults from './state/handlers/defaults.js';
@@ -14,6 +16,7 @@ function getResultType(target) {
     switch (target) {
         case targets.verify: return 'verify';
         case targets.ast: return 'ast';
+        case targets.explain: return 'explain';
         case targets.run: return 'run';
         default: return 'code';
     }
@@ -47,13 +50,18 @@ function applyUpdateResult(updateResult) {
     };
     for (const diagnostic of updateResult.diagnostics) {
         if (diagnostic.severity === 'error') {
-            if (result.type !== 'ast')
+            if (result.type !== 'ast' && result.type !== 'explain')
                 result.success = false;
             result.errors.push(diagnostic);
         }
         else if (diagnostic.severity === 'warning') {
             result.warnings.push(diagnostic);
         }
+    }
+    if (this.options.target === targets.il && result.value) {
+        const { code, ranges } = extractRangesFromIL(result.value);
+        result.value = code;
+        result.ranges = ranges;
     }
     this.result = result;
     this.lastResultOfType[result.type] = result;
@@ -78,7 +86,11 @@ function getServiceUrl(branch) {
     return `${httpRoot.replace(/^http/, 'ws')}/mirrorsharp`;
 }
 
-function applyAstHover(item) {
+function applyCodeViewRange(range) {
+    this.highlightedCodeRange = range ? range.source : null;
+}
+
+function applyAstSelect(item) {
     if (!item || !item.range) {
         this.highlightedCodeRange = null;
         return;
@@ -87,12 +99,22 @@ function applyAstHover(item) {
     this.highlightedCodeRange = { start, end };
 }
 
+function applyCursorMove(getCursorOffset) {
+    if (!this.result || this.result.type !== 'ast')
+        return;
+
+    this.$refs.astView.selectDeepestByOffset(getCursorOffset());
+}
+
 async function createAppAsync() {
     const data = Object.assign({
         languages,
         targets,
 
-        branchGroups: [],
+        branches: {
+            groups: [],
+            ungrouped: []
+        },
         branch: null,
 
         online: true,
@@ -112,18 +134,13 @@ async function createAppAsync() {
     await state.loadAsync(data);
     data.lastLoadedCode = data.code;
 
+    const roslynVersion = window.appBuild.roslynVersion;
     const branchesPromise = (async () => {
         const branches = await getBranchesAsync();
-        const groups = {};
         for (const branch of branches) {
-            let group = groups[branch.group];
-            if (!group) {
-                group = { name: branch.group, branches: [] };
-                groups[branch.group] = group;
-                data.branchGroups.push(group);
-            }
-            group.branches.push(branch);
+            branch.displayName = getBranchDisplayName(branch, roslynVersion);
         }
+        data.branches = groupAndSortBranches(branches);
         return branches;
     })();
 
@@ -152,7 +169,15 @@ async function createAppAsync() {
                 };
             }
         },
-        methods: { applyUpdateWait, applyUpdateResult, applyServerError, applyConnectionChange, applyAstHover }
+        methods: {
+            applyUpdateWait,
+            applyUpdateResult,
+            applyServerError,
+            applyConnectionChange,
+            applyCodeViewRange,
+            applyAstSelect,
+            applyCursorMove
+        }
     };
 }
 

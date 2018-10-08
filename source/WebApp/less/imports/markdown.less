@@ -1,0 +1,28 @@
+@import 'common.less';
+
+.markdown {
+    line-height: 1.5;
+}
+
+.markdown p:first-child {
+    margin-top: 0;
+}
+
+.markdown p:last-child {
+    margin-bottom: 0;
+}
+
+.markdown pre {
+    margin: 0;
+    padding: 5px;
+    background-color: @highlight-color;
+}
+
+.markdown code {
+    padding: 1px 5px;
+    background-color: @highlight-color;
+}
+
+.markdown pre code {
+    padding: 0;
+}

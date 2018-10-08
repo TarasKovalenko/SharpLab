@@ -6,7 +6,7 @@
 
     <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1">
     <meta name="theme-color" content="#4684ee">
-    <meta name="description" content="C#/VB/F# compiler playground. Not a Shark lab." />
+    <meta name="description" content="C#/VB/F# compiler playground.">
 
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{build:favicon-svg}">
     <link rel="icon" type="image/png" href="favicon-256.png" sizes="256x256">
@@ -17,8 +17,7 @@
     <link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
     <link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
 
-    <!-- build:css -->
-    <!-- endbuild -->
+    <link rel="stylesheet" href="{build:css}">
   </head>
   <body data-mobile-codemirror-fullscreen-class="mobile-editor-focus" class="loading" data-cloak="loading">
     <main v-bind:class="{
@@ -31,23 +30,22 @@
           <header>
             <button class="mobile-menu-button" v-app-class-toggle="{ target: '.code', class: 'mobile-menu-open' }"></button>
             <h1>Code</h1>
-            <div class="select-wrapper option-language option">
-              <select v-model="options.language">
-                <option v-bind:value="languages.csharp">C#</option>
-                <option v-bind:value="languages.vb">Visual Basic</option>
-                <option v-bind:value="languages.fsharp">F#</option>
-              </select>
-            </div>
+            <app-select v-model="options.language" class="option-language option">
+              <option v-bind:value="languages.csharp">C#</option>
+              <option v-bind:value="languages.vb">Visual Basic</option>
+              <option v-bind:value="languages.fsharp">F#</option>
+            </app-select>
             <div class="offline-only">[connection lost, reconnecting…]</div>
 
-            <div class="select-wrapper option-branch option" v-show="options.language !== languages.fsharp">
-              <select v-model="branch">
-                <option v-bind:value="null">Default ({build:roslyn-version})</option>
-                <optgroup v-bind:label="group.name" v-for="group in branchGroups">
-                  <option v-for="branch in group.branches" v-bind:value="branch">{{branch.name}} ({{formatDate(branch.commits[0].date, 'd mmm yyyy')}})</option>
-                </optgroup>
-              </select>
-            </div>
+            <app-select v-model="branch" class="option-branch option" v-show="options.language !== languages.fsharp">
+              <option v-bind:value="null">Default ({build:roslyn-version})</option>
+              <option v-for="branch in branches.ungrouped"
+                      v-bind:value="branch">{{branch.displayName}}</option>
+              <optgroup v-bind:label="group.name" v-for="group in branches.groups">
+                <option v-for="branch in group.branches"
+                        v-bind:value="branch">{{branch.displayName}}</option>
+              </optgroup>
+            </app-select>
 
             <div class="mobile-menu"></div>
           </header>
@@ -58,6 +56,7 @@
                            v-bind:highlighted-range="highlightedCodeRange"
                            v-bind:execution-flow="result.type === 'run' && result.value ? result.value.flow : null"
                            v-on:text-change="code = arguments[0]()"
+                           v-on:cursor-move="applyCursorMove"
                            v-on:slow-update-wait="applyUpdateWait"
                            v-on:slow-update-result="applyUpdateResult"
                            v-on:server-error="applyServerError"
@@ -65,17 +64,20 @@
           </div>
         </section>
 
-        <section v-if="branch" class="info-only branch-info non-code">
+        <section v-if="branch && branch.commits" class="details-only branch-details non-code">
           <header>
-            <h1>Branch {{branch.name}}, last commit</h1>
+            <h1>Branch {{branch.displayName}}</h1>
           </header>
           <div class="content">
-            <div>
-              <a v-bind:href="'https://github.com/dotnet/roslyn/commit/' + branch.commits[0].hash" target="_blank">{{branch.commits[0].hash}}</a>
-              at {{formatDate(branch.commits[0].date, 'dd mmm yyyy')}}
-              by {{branch.commits[0].author}}
+            <div v-if="branch.feature && branch.feature.url" class="branch-feature-link">
+              <a v-bind:href="branch.feature.url" target="_blank">{{branch.feature.url}}</a>
             </div>
-            <div class="commit-message">{{branch.commits[0].message.trim()}}</div>
+            <div>
+              Latest commit
+              <a v-bind:href="'https://github.com/dotnet/roslyn/commit/' + branch.commits[0].hash" target="_blank">{{branch.commits[0].hash.substr(0, 6)}}</a>
+              by {{branch.commits[0].author}}:
+            </div>
+            <div class="branch-commit-message">{{branch.commits[0].message.trim()}}</div>
           </div>
         </section>
       </div>
@@ -86,30 +88,27 @@
             <button class="mobile-menu-button" v-app-class-toggle="{ target: '.results', class: 'mobile-menu-open' }"></button>
             <h1>Results</h1>
 
-            <div class="select-wrapper option-target-language option">
-              <select v-model="options.target">
-                <optgroup label="Decompile">
-                  <option v-bind:value="targets.csharp">C#</option>
-                  <option v-bind:value="targets.vb">Visual Basic</option>
-                  <option v-bind:value="targets.il">IL</option>
-                  <option v-bind:value="targets.asm">JIT Asm</option>
-                </optgroup>
-                <optgroup label="Other">
-                  <option v-bind:value="targets.ast">Syntax Tree</option>
-                  <option v-bind:value="targets.verify">Verify Only</option>
-                </optgroup>
-                <optgroup label="Experimental">
-                  <option v-bind:value="targets.run">Run</option>
-                </optgroup>
-              </select>
-            </div>
+            <app-select v-model="options.target" class="option-target-language option">
+              <optgroup label="Decompile">
+                <option v-bind:value="targets.csharp">C#</option>
+                <option v-show="options.target === targets.vb" v-bind:value="targets.vb">Visual Basic</option>
+                <option v-bind:value="targets.il">IL</option>
+                <option v-bind:value="targets.asm">JIT Asm</option>
+              </optgroup>
+              <optgroup label="Other">
+                <option v-bind:value="targets.ast">Syntax Tree</option>
+                <option v-bind:value="targets.verify">Verify Only</option>
+                <option v-bind:value="targets.explain">Explain</option>
+              </optgroup>
+              <optgroup label="Experimental">
+                <option v-bind:value="targets.run">Run</option>
+              </optgroup>
+            </app-select>
 
-            <div class="select-wrapper option-optimizations option">
-              <select v-model="options.release">
-                <option v-bind:value="false">Debug</option>
-                <option v-bind:value="true">Release</option>
-              </select>
-            </div>
+            <app-select v-model="options.release" class="option-optimizations option">
+              <option v-bind:value="false">Debug</option>
+              <option v-bind:value="true">Release</option>
+            </app-select>
             <div class="mobile-menu"></div>
           </header>
           <div class="content">
@@ -117,15 +116,21 @@
             <app-code-view v-if="lastResultOfType.code"
                            v-show="result.type === 'code'"
                            v-bind:value="lastResultOfType.code.value"
-                           v-bind:language="options.target"></app-code-view>
+                           v-bind:ranges="lastResultOfType.code.ranges"
+                           v-bind:language="options.target"
+                           v-on:range-active="applyCodeViewRange"></app-code-view>
             <app-ast-view class="ast"
+                          ref="astView"
                           v-if="lastResultOfType.ast"
                           v-show="result.type === 'ast'"
                           v-bind:roots="lastResultOfType.ast.value"
-                          v-on:item-hover="applyAstHover"></app-ast-view>
+                          v-on:item-select="applyAstSelect"></app-ast-view>
             <app-verify-view v-if="lastResultOfType.verify"
                              v-show="result.type === 'verify'"
                              v-bind:value="lastResultOfType.verify.value"></app-verify-view>
+            <app-explain-view v-if="lastResultOfType.explain"
+                              v-show="result.type === 'explain'"
+                              v-bind:explanations="lastResultOfType.explain.value"></app-explain-view>
             <app-output-view v-if="lastResultOfType.run"
                              v-show="result.type === 'run'"
                              v-bind:output="lastResultOfType.run.value ? lastResultOfType.run.value.output : []"></app-output-view>
@@ -167,19 +172,7 @@
       <span hidden>(Experimental) Also has a <a data-manual-role="toggle-theme">dark theme</a>.</span>
     </footer>
 
-    <script type="text/x-template" id="app-ast-view-item">
-      <span v-if="typeof item === 'string'" class="ast-item-wrap ast-item-value">
-        <span class="ast-item-type"></span>
-        {{renderValue(item, 'value')}}
-      </span>
-      <span v-else v-bind:class="'ast-item-wrap ast-item-' + item.type">
-        <button v-if="item.children"></button>
-        <span class="ast-item-type" v-bind:title="item.type"></span>
-        <span class="ast-item-property" v-if="item.property">{{item.property}}:</span>
-        <span v-if="item.value !== undefined" class="ast-inline-value">{{renderValue(item.value, item.type)}}</span>
-        <span class="ast-item-kind">{{item.kind}}</span>
-      </span>
-    </script>
+    {build:templates}
 
     <script type="text/javascript">
       (function() {
@@ -192,8 +185,8 @@
         });
       })();
     </script>
-    <!-- build:js -->
-    <!-- endbuild -->
+    <script>window.appBuild = {roslynVersion: '{build:roslyn-version}'};</script>
+    <script src="{build:js}"></script>
     <script>
       (function() {
         var host = window.location.host;

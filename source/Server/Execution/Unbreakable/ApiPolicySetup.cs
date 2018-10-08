@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
@@ -7,8 +8,8 @@ using System.Linq.Expressions;
 using System.Net;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Web;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
@@ -26,28 +27,28 @@ namespace SharpLab.Server.Execution.Unbreakable {
         public static ApiPolicy CreatePolicy() => ApiPolicy.SafeDefault()
             .Namespace("System", Neutral, SetupSystem)
             .Namespace("System.Collections.Concurrent", Neutral, SetupSystemCollectionsConcurrent)
+            .Namespace("System.Collections.Specialized", Neutral, SetupSystemCollectionsSpecialized)
             .Namespace("System.Diagnostics", Neutral, SetupSystemDiagnostics)
             .Namespace("System.Globalization", Neutral, SetupSystemGlobalization)
-            .Namespace("System.Reflection", Neutral, SetupSystemReflection)
+            .Namespace("System.IO", Neutral, SetupSystemIO)
             .Namespace("System.Linq.Expressions", Neutral, SetupSystemLinqExpressions)
             .Namespace("System.Net", Neutral, SetupSystemNet)
             .Namespace("System.Numerics", Neutral, SetupSystemNumerics)
-            .Namespace("System.IO", Neutral,
-                // required by F#'s printf
-                n => n.Type(typeof(TextWriter), Neutral)
-            )
+            .Namespace("System.Reflection", Neutral, SetupSystemReflection)
+            .Namespace("System.Runtime.InteropServices", Neutral, SetupSystemRuntimeInteropServices)
             .Namespace("System.Security.Cryptography", Neutral, SetupSystemSecurityCryptography)
-            .Namespace("System.Text", Neutral, SetupSystemText)
             .Namespace("System.Web", Neutral, SetupSystemWeb)
             .Namespace("SharpLab.Runtime.Internal", Neutral,
                 n => n.Type(typeof(Flow), Neutral,
                          t => t.Member(nameof(Flow.ReportException), Allowed, NoGuardRewriter.Default)
                                .Member(nameof(Flow.ReportLineStart), Allowed, NoGuardRewriter.Default)
                                .Member(nameof(Flow.ReportValue), Allowed, NoGuardRewriter.Default)
+                               .Member(nameof(Flow.ReportRefValue), Allowed, NoGuardRewriter.Default)
                      )
             )
             .Namespace("", Neutral,
                 n => n.Type(typeof(SharpLabObjectExtensions), Allowed)
+                      .Type(typeof(Inspect), Allowed)
             )
             .Namespace("Microsoft.FSharp.Core", Neutral, SetupFSharpCore)
             .Namespace("Microsoft.FSharp.Collections", Neutral,
@@ -76,21 +77,19 @@ namespace SharpLab.Server.Execution.Unbreakable {
 
         private static void SetupSystem(NamespacePolicy namespacePolicy) {
             namespacePolicy
-                .Type(typeof(BitConverter), Neutral,
-                    t => t.Member(nameof(BitConverter.GetBytes), Allowed, ArrayReturnRewriter.Default)
-                )
                 .Type(typeof(Console), Neutral,
                     t => t.Member(nameof(Console.Write), Allowed)
                           .Member(nameof(Console.WriteLine), Allowed)
                           // required by F#'s printf
                           .Getter(nameof(Console.Out), Allowed)
                 )
+                .Type(typeof(MemoryExtensions), Allowed)
                 .Type(typeof(ReadOnlySpan<>), Allowed,
-                    t => t.Member(nameof(ReadOnlySpan<object>.DangerousCreate), Denied)
+                    t => t.Member(nameof(ReadOnlySpan<object>.ToArray), Allowed, ArrayReturnRewriter.Default)
                 )
                 .Type(typeof(ReadOnlySpan<>.Enumerator), Allowed)
                 .Type(typeof(Span<>), Allowed,
-                    t => t.Member(nameof(ReadOnlySpan<object>.DangerousCreate), Denied)
+                    t => t.Member(nameof(Span<object>.ToArray), Allowed, ArrayReturnRewriter.Default)
                 )
                 .Type(typeof(Span<>.Enumerator), Allowed)
                 .Type(typeof(STAThreadAttribute), Allowed)
@@ -100,6 +99,12 @@ namespace SharpLab.Server.Execution.Unbreakable {
 
         private static void SetupSystemType(TypePolicy typePolicy) {
             typePolicy
+                .Getter(nameof(Type.GenericTypeArguments), Allowed, ArrayReturnRewriter.Default)
+                .Getter(nameof(Type.IsGenericType), Allowed)
+                .Getter(nameof(Type.IsConstructedGenericType), Allowed)
+                .Getter(nameof(Type.IsGenericTypeDefinition), Allowed)
+                .Getter(nameof(Type.ContainsGenericParameters), Allowed)
+                .Member(nameof(Type.GetGenericTypeDefinition), Allowed)
                 .Member(nameof(Type.GetConstructor), Allowed)
                 .Member(nameof(Type.GetEvent), Allowed)
                 .Member(nameof(Type.GetField), Allowed)
@@ -117,8 +122,19 @@ namespace SharpLab.Server.Execution.Unbreakable {
             );
         }
 
+        private static void SetupSystemCollectionsSpecialized(NamespacePolicy namespacePolicy) {
+            namespacePolicy.Type(typeof(NameValueCollection), Allowed,
+                t => t.Constructor(Allowed, CountArgumentRewriter.ForCapacity)
+                      .Member(nameof(NameValueCollection.Add), Allowed, AddCallRewriter.Default)
+                      .Member(nameof(NameValueCollection.Set), Allowed, AddCallRewriter.Default)
+                      .Member("set_Item", Allowed, AddCallRewriter.Default)
+            );
+        }
+
         private static void SetupSystemDiagnostics(NamespacePolicy namespacePolicy) {
             namespacePolicy
+                // required by some F# code
+                .Type(typeof(DebuggerTypeProxyAttribute), Allowed)
                 .Type(typeof(Stopwatch), Allowed, typePolicy => {
                     foreach (var property in typeof(Stopwatch).GetProperties()) {
                         if (!property.Name.Contains("Elapsed"))
@@ -142,6 +158,28 @@ namespace SharpLab.Server.Execution.Unbreakable {
                         typePolicy.Getter(property.Name, Allowed);
                     }
                 });
+        }
+
+        private static void SetupSystemIO(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                // required by F#'s printf
+                .Type(typeof(TextWriter), Neutral)
+                .Type(typeof(TextReader), Neutral,
+                    t => t.Member(nameof(TextReader.Dispose), Allowed)
+                          .Member(nameof(TextReader.Close), Allowed)
+                          .Member(nameof(TextReader.Peek), Allowed)
+                          .Member(nameof(TextReader.ReadBlock), Allowed)
+                          .Member(nameof(TextReader.ReadLine), Allowed, StringReturnRewriter.Default)
+                          .Member(nameof(TextReader.ReadToEnd), Allowed, StringReturnRewriter.Default)
+                )
+                .Type(typeof(StringReader), Neutral,
+                    t => t.Constructor(Allowed)
+                          .Member(nameof(StringReader.Close), Allowed)
+                          .Member(nameof(StringReader.Peek), Allowed)
+                          .Member(nameof(StringReader.Read), Allowed)
+                          .Member(nameof(StringReader.ReadLine), Allowed, StringReturnRewriter.Default)
+                          .Member(nameof(StringReader.ReadToEnd), Allowed, StringReturnRewriter.Default)
+                );
         }
 
         private static void SetupSystemLinqExpressions(NamespacePolicy namespacePolicy) {
@@ -197,6 +235,13 @@ namespace SharpLab.Server.Execution.Unbreakable {
             });
         }
 
+        private static void SetupSystemRuntimeInteropServices(NamespacePolicy namespacePolicy) {
+            namespacePolicy
+                .Type(typeof(Marshal), Neutral,
+                    t => t.Member(nameof(Marshal.SizeOf), Allowed)
+                );
+        }
+
         private static void SetupSystemSecurityCryptography(NamespacePolicy namespacePolicy) {
             ForEachTypeInNamespaceOf<HashAlgorithm>(type => {
                 if (!type.IsSameAsOrSubclassOf<HashAlgorithm>())
@@ -207,14 +252,6 @@ namespace SharpLab.Server.Execution.Unbreakable {
                           .Member(nameof(HashAlgorithm.ComputeHash), Allowed, ArrayReturnRewriter.Default)
                 );
             });
-        }
-
-        private static void SetupSystemText(NamespacePolicy namespacePolicy) {
-            namespacePolicy
-                .Type(typeof(Encoding), Neutral,
-                    // TODO: Move to Unbreakable
-                    t => t.Member(nameof(Encoding.GetBytes), Allowed, ArrayReturnRewriter.Default)
-                );
         }
 
         private static void SetupSystemWeb(NamespacePolicy namespacePolicy) {
@@ -233,6 +270,7 @@ namespace SharpLab.Server.Execution.Unbreakable {
                           .Member(nameof(HttpUtility.UrlEncode), Allowed)
                           .Member(nameof(HttpUtility.HtmlAttributeEncode), Allowed)
                           .Member(nameof(HttpUtility.JavaScriptStringEncode), Allowed)
+                          .Member(nameof(HttpUtility.ParseQueryString), Allowed)
                 );
         }
 
@@ -240,6 +278,7 @@ namespace SharpLab.Server.Execution.Unbreakable {
             namespacePolicy
                 .Type(typeof(CompilationArgumentCountsAttribute), Allowed)
                 .Type(typeof(CompilationMappingAttribute), Allowed)
+                .Type(typeof(CustomOperationAttribute), Allowed)
                 .Type(typeof(EntryPointAttribute), Allowed)
                 .Type(typeof(ExtraTopLevelOperators), Neutral,
                     t => t.Member(nameof(ExtraTopLevelOperators.CreateDictionary), Allowed, CollectedEnumerableArgumentRewriter.Default)
@@ -266,6 +305,7 @@ namespace SharpLab.Server.Execution.Unbreakable {
                           .Getter(nameof(LanguagePrimitives.GenericEqualityComparer), Allowed)
                           .Getter(nameof(LanguagePrimitives.GenericEqualityERComparer), Allowed)
                 )
+                .Type(typeof(LanguagePrimitives.HashCompare), Allowed)
                 .Type(typeof(OptimizedClosures.FSharpFunc<,,>), Allowed)
                 .Type(typeof(OptimizedClosures.FSharpFunc<,,,>), Allowed)
                 .Type(typeof(OptimizedClosures.FSharpFunc<,,,,>), Allowed)
@@ -290,7 +330,9 @@ namespace SharpLab.Server.Execution.Unbreakable {
         }
 
         private static void SetupMicrosoftVisualBasic(NamespacePolicy namespacePolicy) {
-            namespacePolicy.Type(nameof(Microsoft.VisualBasic.Strings), Allowed);
+            namespacePolicy
+                .Type(nameof(Microsoft.VisualBasic.Globals), Allowed)
+                .Type(nameof(Microsoft.VisualBasic.Strings), Allowed);
         }
 
         private static void ForEachTypeInNamespaceOf<T>(Action<Type> action) {

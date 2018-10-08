@@ -1,5 +1,4 @@
 import * as getGistAsync from '../js/state/handlers/url/get-gist-async.js';
-
 import languages from '../js/helpers/languages.js';
 import targets from '../js/helpers/targets.js';
 import url from '../js/state/handlers/url.js';
@@ -30,9 +29,10 @@ describe('v2', () => {
     for (const code of [
         'public void M() {\r\n}',
         'a || b || c',
+        'void Func13() {}',
     ]) {
         test(`save/load preserves code '${code}'`, async () => {
-            url.save(code, {});
+            url.save(code, { language: languages.csharp });
             const { code: loaded } = await url.loadAsync();
             expect(loaded).toBe(code);
         });

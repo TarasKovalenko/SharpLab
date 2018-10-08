@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Emit;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Compiler;
 using Microsoft.FSharp.Compiler.SourceCodeServices;
@@ -12,19 +13,26 @@ using MirrorSharp.FSharp.Advanced;
 
 namespace SharpLab.Server.Compilation {
     public class Compiler : ICompiler {
-        public async Task<bool> TryCompileToStreamAsync(MemoryStream assemblyStream, MemoryStream symbolStream, IWorkSession session, IList<Diagnostic> diagnostics, CancellationToken cancellationToken) {
-            if (session.IsFSharp())
-                return await TryCompileFSharpToStreamAsync(assemblyStream, session, diagnostics, cancellationToken);
+        private static readonly EmitOptions RoslynEmitOptions = new EmitOptions(
+            // TODO: try out embedded
+            debugInformationFormat: DebugInformationFormat.PortablePdb
+        );
+
+        public async Task<(bool assembly, bool symbols)> TryCompileToStreamAsync(MemoryStream assemblyStream, MemoryStream symbolStream, IWorkSession session, IList<Diagnostic> diagnostics, CancellationToken cancellationToken) {
+            if (session.IsFSharp()) {
+                var compiled = await TryCompileFSharpToStreamAsync(assemblyStream, session, diagnostics, cancellationToken).ConfigureAwait(false);
+                return (compiled, false);
+            }
 
             var compilation = await session.Roslyn.Project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            var emitResult = compilation.Emit(assemblyStream, pdbStream: symbolStream);
+            var emitResult = compilation.Emit(assemblyStream, pdbStream: symbolStream, options: RoslynEmitOptions);
             if (!emitResult.Success) {
                 foreach (var diagnostic in emitResult.Diagnostics) {
                     diagnostics.Add(diagnostic);
                 }
-                return false;
+                return (false, false);
             }
-            return true;
+            return (true, true);
         }
 
         private async Task<bool> TryCompileFSharpToStreamAsync(MemoryStream assemblyStream, IWorkSession session, IList<Diagnostic> diagnostics, CancellationToken cancellationToken) {

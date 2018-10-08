@@ -15,6 +15,8 @@ namespace SharpLab.Server.Execution.Internal {
             typeof(Flow).GetMethod(nameof(Flow.ReportLineStart));
         private static readonly MethodInfo ReportValueMethod =
             typeof(Flow).GetMethod(nameof(Flow.ReportValue));
+        private static readonly MethodInfo ReportRefValueMethod =
+            typeof(Flow).GetMethod(nameof(Flow.ReportRefValue));
         private static readonly MethodInfo ReportExceptionMethod =
             typeof(Flow).GetMethod(nameof(Flow.ReportException));
 
@@ -29,6 +31,7 @@ namespace SharpLab.Server.Execution.Internal {
                 var flow = new ReportMethods {
                     ReportLineStart = module.ImportReference(ReportLineStartMethod),
                     ReportValue = module.ImportReference(ReportValueMethod),
+                    ReportRefValue = module.ImportReference(ReportRefValueMethod),
                     ReportException = module.ImportReference(ReportExceptionMethod),
                 };
                 foreach (var type in module.Types) {
@@ -55,7 +58,7 @@ namespace SharpLab.Server.Execution.Internal {
             var lastLine = (int?)null;
             for (var i = 0; i < instructions.Count; i++) {
                 var instruction = instructions[i];
-                var sequencePoint = instruction.SequencePoint;
+                var sequencePoint = method.DebugInformation?.GetSequencePoint(instruction);
                 var hasSequencePoint = sequencePoint != null && sequencePoint.StartLine != HiddenLine;
                 if (!hasSequencePoint && lastLine == null)
                     continue;
@@ -90,7 +93,7 @@ namespace SharpLab.Server.Execution.Internal {
             if (!method.HasParameters)
                 return;
 
-            var sequencePoint = instruction.SequencePoint;
+            var sequencePoint = method.DebugInformation?.GetSequencePoint(instruction);
             var parameterLines = _languages[session.LanguageName]
                 .GetMethodParameterLines(session, sequencePoint.StartLine, sequencePoint.StartColumn);
 
@@ -98,7 +101,7 @@ namespace SharpLab.Server.Execution.Internal {
                 return;
 
             foreach (var parameter in method.Parameters) {
-                if (parameter.ParameterType.IsByReference)
+                if (parameter.IsOut)
                     continue;
                 InsertReportValue(
                     il, instruction,
@@ -113,10 +116,11 @@ namespace SharpLab.Server.Execution.Internal {
             var localIndex = GetIndexIfStloc(instruction);
             if (localIndex != null) {
                 var variable = il.Body.Variables[localIndex.Value];
-                if (string.IsNullOrEmpty(variable.Name))
+                var symbols = il.Body.Method.DebugInformation;
+                if (symbols == null || !symbols.TryGetName(variable, out var variableName))
                     return null;
 
-                return (variable.Name, variable.VariableType);
+                return (variableName, variable.VariableType);
             }
 
             if (instruction.OpCode.Code == Code.Ret) {
@@ -125,17 +129,35 @@ namespace SharpLab.Server.Execution.Internal {
                 var returnType = il.Body.Method.ReturnType;
                 if (returnType.IsVoid())
                     return null;
-                return (null, returnType);
+                return ("return", returnType);
             }
 
             return null;
         }
 
-        private void InsertReportValue(ILProcessor il, Instruction instruction, Instruction getValue, TypeReference valueType, string valueName, int line, ReportMethods flow, ref int index) {
+        private void InsertReportValue(
+            ILProcessor il,
+            Instruction instruction,
+            Instruction getValue,
+            TypeReference valueType,
+            string valueName,
+            int line,
+            ReportMethods flow,
+            ref int index
+        ) {
             il.InsertBefore(instruction, getValue);
             il.InsertBefore(instruction, valueName != null ? il.Create(OpCodes.Ldstr, valueName) : il.Create(OpCodes.Ldnull));
             il.InsertBefore(instruction, il.CreateLdcI4Best(line));
-            il.InsertBefore(instruction, il.CreateCall(new GenericInstanceMethod(flow.ReportValue) {
+
+            var report = flow.ReportValue;
+            if (valueType is RequiredModifierType requiredType)
+                valueType = requiredType.ElementType; // not the same as GetElementType() which unwraps nested ref-types etc
+
+            if (valueType.IsByReference) {
+                report = flow.ReportRefValue;
+                valueType = valueType.GetElementType();
+            }
+            il.InsertBefore(instruction, il.CreateCall(new GenericInstanceMethod(report) {
                 GenericArguments = { valueType }
             }));
             index += 4;
@@ -247,6 +269,7 @@ namespace SharpLab.Server.Execution.Internal {
         private struct ReportMethods {
             public MethodReference ReportLineStart { get; set; }
             public MethodReference ReportValue { get; set; }
+            public MethodReference ReportRefValue { get; set; }
             public MethodReference ReportException { get; set; }
         }
     }

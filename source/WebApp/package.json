@@ -1,55 +1,46 @@
 {
-  "name": "_",
+  "name": "sharplab",
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "prepare": "patch-package",
+    "build": "node build.js",
+    "watch": "node build.js --watch",
     "test": "jest"
   },
   "jest": {
     "testMatch": [
-      "**/tests/**/*.tests.js"
+      "<rootDir>/tests/**/*.tests.js"
     ]
   },
   "devDependencies": {
-    "babel-jest": "^20.0.3",
-    "babel-plugin-transform-es2015-modules-commonjs": "^6.24.1",
-    "eslint": "^3.19.0",
-    "eslint-plugin-import": "^2.8.0",
-    "gulp": "^3.9.0",
-    "gulp-autoprefixer": "^3.1.0",
-    "gulp-babili": "0.0.2",
-    "gulp-better-rollup": "^1.1.1",
-    "gulp-clean-css": "^3.7.0",
-    "gulp-concat": "^2.6.0",
-    "gulp-debug": "^3.0.0",
-    "gulp-html-replace": "^1.5.5",
-    "gulp-if": "^2.0.2",
-    "gulp-less": "^3.3.0",
-    "gulp-load-plugins": "^1.2.2",
-    "gulp-mirror": "^1.0.0",
-    "gulp-noop": "^1.0.0",
-    "gulp-plumber": "^0.6.6",
-    "gulp-rename": "^1.2.2",
-    "gulp-replace": "^0.5.4",
-    "gulp-sourcemaps": "^1.6.0",
-    "gulp-svg2png": "https://github.com/ashmind/gulp-svg2png.git#gh-36-temp",
-    "gulp-uglify": "^1.5.1",
-    "jest": "^20.0.4",
-    "md5-file": "^3.1.1",
-    "multipipe": "^1.0.1",
-    "patch-package": "^3.3.3",
-    "rimraf": "^2.5.4",
-    "rollup": "^0.41.6",
-    "rollup-plugin-commonjs": "^8.0.2",
-    "rollup-plugin-node-resolve": "^3.0.0",
-    "svg2png": "3.0.0"
+    "autoprefixer": "9.1.0",
+    "babel-jest": "20.0.3",
+    "babel-plugin-transform-es2015-modules-commonjs": "6.24.1",
+    "cssnano": "4.0.5",
+    "eslint": "3.19.0",
+    "eslint-plugin-import": "2.8.0",
+    "fs-jetpack": "2.1.0",
+    "html-minifier": "3.5.19",
+    "jest": "23.5.0",
+    "less": "3.8.1",
+    "md5-file": "3.1.1",
+    "oldowan": "1.0.0-preview-2",
+    "postcss": "7.0.2",
+    "rollup": "0.66.0",
+    "rollup-plugin-commonjs": "9.1.4",
+    "rollup-plugin-node-resolve": "3.0.0",
+    "rollup-plugin-terser": "1.0.1",
+    "sharp": "0.20.5"
   },
   "dependencies": {
-    "codemirror": "^5.26.0",
-    "dateformat": "^1.0.12",
-    "lz-string": "^1.4.4",
-    "mirrorsharp": "^0.9.2",
-    "vue": "^2.3.0"
+    "codemirror": "5.38.0",
+    "codemirror-addon-infotip": "1.0.0-pre-20180923",
+    "codemirror-addon-lint-fix": "1.0.1-pre-20170118",
+    "dateformat": "1.0.12",
+    "lz-string": "1.4.4",
+    "marked": "0.3.19",
+    "mirrorsharp": "0.11.0-pre-07",
+    "throttle-debounce": "1.0.1",
+    "vue": "2.5.16"
   }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
@@ -13,11 +14,15 @@ namespace SharpLab.Runtime.Internal {
         public static TextWriter Writer { get; } = new OutputWriter();
 
         public static void WriteWarning(string message) {
-            WriteObject(new InspectionResult("Warning", new StringBuilder(message)));
+            WriteObject(new SimpleInspectionResult("Warning", message));
         }
-        
-        public static void Write(InspectionResult data) {
-            WriteObject(data);
+
+        public static void Write(SimpleInspectionResult inspection) {
+            WriteObject(inspection);
+        }
+
+        public static void Write(MemoryInspectionResult inspection) {
+            WriteObject(inspection);
         }
 
         public static void Write(string value) {
@@ -30,7 +35,7 @@ namespace SharpLab.Runtime.Internal {
 
         private static void WriteObject(object value) {
             if (_stream.Count == MaxStreamDataCount - 1) {
-                _stream.Add(new InspectionResult("System", new StringBuilder("Output limit reached")));
+                _stream.Add(new SimpleInspectionResult("System", "Output limit reached"));
                 return;
             }
 
@@ -41,6 +46,9 @@ namespace SharpLab.Runtime.Internal {
 
         private class OutputWriter : TextWriter {
             public override Encoding Encoding => Encoding.UTF8;
+
+            public OutputWriter() : base(CultureInfo.InvariantCulture) {
+            }
 
             public override void Write(string value) {
                 Output.Write(value);

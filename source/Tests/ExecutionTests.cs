@@ -7,18 +7,21 @@ using Microsoft.CodeAnalysis;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using Xunit.Abstractions;
 using AshMind.Extensions;
 using Pedantic.IO;
-using MirrorSharp;
 using MirrorSharp.Testing;
 using MirrorSharp.Testing.Results;
-using SharpLab.Server;
 using SharpLab.Server.Common;
 using SharpLab.Tests.Internal;
 
 namespace SharpLab.Tests {
     public class ExecutionTests {
-        private static readonly MirrorSharpOptions MirrorSharpOptions = Startup.CreateMirrorSharpOptions(Startup.CreateContainer());
+        private readonly ITestOutputHelper _testOutputHelper;
+
+        public ExecutionTests(ITestOutputHelper testOutputHelper) {
+            _testOutputHelper = testOutputHelper;
+        }
 
         [Theory]
         [InlineData("Exception.DivideByZero.cs", 4, "DivideByZeroException")]
@@ -45,7 +48,9 @@ namespace SharpLab.Tests {
         [Theory]
         [InlineData("Variable.AssignCall.cs", 3, "x: 0")]
         [InlineData("Variable.ManyVariables.cs", 12, "x10: 0")]
-        [InlineData("Return.Simple.cs", 8, "0")]
+        [InlineData("Return.Simple.cs", 8, "return: 0")]
+        [InlineData("Return.Ref.cs", 7, "return: 0")]
+        [InlineData("Return.Ref.Readonly.cs", 6, "return: 0")]
         public async Task SlowUpdate_ReportsValueNotes(string resourceName, int expectedLineNumber, string expectedNotes) {
             var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName));
 
@@ -65,6 +70,8 @@ namespace SharpLab.Tests {
         [InlineData("void M(int a\r\n) {}", "M(1)", 1, "a: 1", true)]
         [InlineData("void M(\r\nint a\r\n) {}", "M(1)", 2, "a: 1", true)]
         [InlineData("void M(int a) {\r\n\r\nConsole.WriteLine();}", "M(1)", 1, "a: 1")]
+        [InlineData("void M(in int a) {}", "M(1)", 1, "a: 1")]
+        [InlineData("void M(ref int a) {}", "int x = 1; M(ref x)", 1, "a: 1")]
         [InlineData("void M(int a, int b) {}", "M(1, 2)", 1, "a: 1, b: 2")]
         [InlineData("void M(int a, out int b) { b = 1; }", "M(1, out var _)", 1, "a: 1")]
         [InlineData("void M(int a, int b = 0) {}", "M(1)", 1, "a: 1, b: 0")]
@@ -179,7 +186,7 @@ namespace SharpLab.Tests {
         [InlineData("(1, 2, 3).Inspect();", "Inspect: (1, 2, 3)")]
         [InlineData("new[] { 1, 2, 3 }.Inspect();", "Inspect: { 1, 2, 3 }")]
         [InlineData("3.Dump();", "Dump: 3")]
-        public async Task SlowUpdate_IncludesInspectAndDumpInOutput(string code, string expectedOutput) {
+        public async Task SlowUpdate_IncludesSimpleInspectAndDumpInOutput(string code, string expectedOutput) {
             var driver = await NewTestDriverAsync(@"
                 public static class Program {
                     public static void Main() { " + code + @" }
@@ -190,6 +197,22 @@ namespace SharpLab.Tests {
 
             AssertIsSuccess(result);
             Assert.Equal(expectedOutput, result.ExtensionResult.GetOutputAsString());
+        }
+
+
+        [Theory]
+        [InlineData("Output.Inspect.Heap.Simple.cs2output")]
+        [InlineData("Output.Inspect.Heap.Struct.cs2output")]
+        [InlineData("Output.Inspect.Heap.Struct.Nested.cs2output")]
+        [InlineData("Output.Inspect.Heap.Int32.cs2output")]
+        public async Task SlowUpdate_IncludesInspectHeapInOutput(string resourceName) {
+            var code = TestCode.FromResource("Execution." + resourceName);
+            var driver = await NewTestDriverAsync(code.Original);
+
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+
+            AssertIsSuccess(result);
+            code.AssertIsExpected(result.ExtensionResult.GetOutputAsString(), _testOutputHelper);
         }
 
         [Theory]
@@ -204,6 +227,29 @@ namespace SharpLab.Tests {
                 using System;
                 public static class Program {
                     public static void Main() { " + code + @" }
+                }
+            ");
+
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+
+            AssertIsSuccess(result);
+            Assert.Equal(
+                expectedOutput.Replace("{newline}", Environment.NewLine),
+                result.ExtensionResult.GetOutputAsString()
+            );
+        }
+
+        [Theory]
+        [InlineData("Console.Write(3.1);", "cs-CZ", "3.1")]
+        public async Task SlowUpdate_IncludesConsoleInOutput_UsingInvariantCulture(string code, string currentCultureName, string expectedOutput) {
+            var driver = await NewTestDriverAsync(@"
+                using System;
+                using System.Globalization;
+                public static class Program {
+                    public static void Main() {
+                        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(""" + currentCultureName + @""");
+                        " + code + @"
+                    }
                 }
             ");
 
@@ -273,13 +319,24 @@ namespace SharpLab.Tests {
         }
 
         [Theory]
-        [InlineData("Regression.CertainLoop.cs")]
-        [InlineData("Regression.FSharpNestedLambda.fs", LanguageNames.FSharp)]
-        [InlineData("Regression.NestedAnonymousObject.cs")]
+        //[InlineData("Regression.CertainLoop.cs")]
+        //[InlineData("Regression.FSharpNestedLambda.fs", LanguageNames.FSharp)]
+        //[InlineData("Regression.NestedAnonymousObject.cs")]
+        [InlineData("Regression.ReturnRef.cs")]
         public async Task SlowUpdate_DoesNotFail(string resourceName, string languageName = LanguageNames.CSharp) {
             var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName), languageName);
             var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
             AssertIsSuccess(result);
+        }
+
+        [Theory]
+        [InlineData("Regression.Disposable.cs")]
+        public async Task SlowUpdate_DoesNotFail_OnAnyGuard(string resourceName) {
+            var driver = await NewTestDriverAsync(LoadCodeFromResource(resourceName), LanguageNames.CSharp);
+            var result = await driver.SendSlowUpdateAsync<ExecutionResultData>();
+
+            AssertIsSuccess(result, allowRuntimeException: true);
+            Assert.DoesNotMatch("GuardException", result.ExtensionResult.GetOutputAsString());
         }
 
         private static void AssertIsSuccess(SlowUpdateResult<ExecutionResultData> result, bool allowRuntimeException = false) {
@@ -302,7 +359,7 @@ namespace SharpLab.Tests {
             string languageName = LanguageNames.CSharp,
             string optimize = Optimize.Debug
         ) {
-            var driver = MirrorSharpTestDriver.New(MirrorSharpOptions).SetText(code);
+            var driver = MirrorSharpTestDriver.New(TestEnvironment.MirrorSharpOptions).SetText(code);
             await driver.SendSetOptionsAsync(languageName, TargetNames.Run, optimize);
             return driver;
         }
@@ -318,9 +375,15 @@ namespace SharpLab.Tests {
             public string GetOutputAsString() {
                 return string.Join("\n", Output.Select(token => {
                     if (token is JObject @object)
-                        return @object.Value<string>("title") + ": " + @object.Value<string>("value");
+                        return ConvertOutputObjectToString(@object);
                     return token.Value<string>();
                 }));
+            }
+
+            private string ConvertOutputObjectToString(JObject @object) {
+                if (@object.Value<string>("type") == "inspection:simple")
+                    return @object.Value<string>("title") + ": " + @object.Value<string>("value");
+                return @object.ToString();
             }
 
             [OnDeserialized]

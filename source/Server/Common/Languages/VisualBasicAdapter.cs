@@ -24,12 +24,12 @@ namespace SharpLab.Server.Common.Languages {
         private static readonly ImmutableArray<KeyValuePair<string, object>> ReleasePreprocessorSymbols = ImmutableArray<KeyValuePair<string, object>>.Empty;
 
         private readonly IAssemblyReferenceCollector _referenceCollector;
-        private readonly IFeatureDiscovery _featureDiscovery;
         private ReferencedAssembliesLoadTaskSource _referencedAssembliesTaskSource = new ReferencedAssembliesLoadTaskSource();
+        private readonly IAssemblyDocumentationResolver _documentationResolver;
 
-        public VisualBasicAdapter(IAssemblyReferenceCollector referenceCollector, IFeatureDiscovery featureDiscovery) {
+        public VisualBasicAdapter(IAssemblyReferenceCollector referenceCollector, IAssemblyDocumentationResolver documentationResolver) {
             _referenceCollector = referenceCollector;
-            _featureDiscovery = featureDiscovery;
+            _documentationResolver = documentationResolver;
         }
 
         public string LanguageName => LanguageNames.VisualBasic;
@@ -42,12 +42,11 @@ namespace SharpLab.Server.Common.Languages {
                 // This setup will only run if the language is used, so branches
                 // where no one ever used VB will be faster to open.
                 var maxLanguageVersion = Enum.GetValues(typeof(LanguageVersion)).Cast<LanguageVersion>().Max();
-                var features = _featureDiscovery.SlowDiscoverAll().ToDictionary(f => f, f => (string) null);
 
                 o.ParseOptions = new VisualBasicParseOptions(
                     maxLanguageVersion,
                     documentationMode: DocumentationMode.Diagnose
-                ).WithFeatures(features);
+                );
                 var referencedAssemblies = _referenceCollector.SlowGetAllReferencedAssembliesRecursive(
                     // Essential
                     NetFrameworkRuntime.AssemblyOfValueTuple,
@@ -64,7 +63,7 @@ namespace SharpLab.Server.Common.Languages {
                 ).ToImmutableList();
                 _referencedAssembliesTaskSource.Complete(referencedAssemblies);
                 o.MetadataReferences = referencedAssemblies
-                    .Select(a => (MetadataReference)MetadataReference.CreateFromFile(a.Location))
+                    .Select(a => (MetadataReference)MetadataReference.CreateFromFile(a.Location, documentation: _documentationResolver.GetDocumentation(a)))
                     .ToImmutableList();
             });
             // ReSharper restore HeapView.DelegateAllocation
